@@ -49,9 +49,9 @@ async function handleLogin() {
     <div class="login-card">
       <div class="login-header">
         <div class="logo-container">
-          <img src="/logo-new.png" alt="Potenza Gym Logo" class="logo" />
+          <img src="/logo.png" alt="Rheb Logo" class="logo" />
         </div>
-        <h1>Potenza Gym</h1>
+        <h1>Rheb</h1>
         <p class="subtitle">Inicia sesión en tu cuenta</p>
       </div>
 
@@ -113,7 +113,7 @@ async function handleLogin() {
   padding: 32px 24px;
   width: 100%;
   max-width: 100%;
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--card-border);
 }
 
 .login-header {
@@ -181,8 +181,8 @@ async function handleLogin() {
 
 .form-group input:focus {
   outline: none;
-  border-color: #FFD700;
-  box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.15);
+  border-color: var(--rheb-primary-green);
+  box-shadow: 0 0 0 3px rgba(0, 77, 64, 0.15);
 }
 
 .form-group input:disabled {
@@ -200,9 +200,9 @@ async function handleLogin() {
 }
 
 .login-button {
-  background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
-  color: #2D2D2D;
-  border: 2px solid #000000;
+  background: var(--primary-btn-bg);
+  color: var(--primary-btn-text);
+  border: none;
   padding: 16px;
   border-radius: 10px;
   font-size: 1rem;
@@ -267,13 +267,13 @@ async function handleLogin() {
 }
 
 .mock-user {
-  background-color: #2D2D2D;
-  color: #FFD700;
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-white);
 }
 
 .mock-admin {
-  background-color: #FFD700;
-  color: #2D2D2D;
+  background-color: var(--rheb-primary-green);
+  color: var(--rheb-white);
 }
 
 .mock-button:active:not(:disabled) {

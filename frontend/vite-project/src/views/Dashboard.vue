@@ -33,7 +33,7 @@ function goToSales() {
   <div class="dashboard-container">
     <div class="dashboard-header">
       <div class="header-left">
-        <img src="/logo.svg" alt="Potenza Gym Logo" class="logo-small" />
+        <img src="/logo.png" alt="Rheb Logo" class="logo-small" />
         <div>
           <h1>Mi Panel</h1>
           <p class="user-name" v-if="user">{{ user.name }}</p>
@@ -47,7 +47,7 @@ function goToSales() {
 
     <div class="dashboard-content">
       <div class="welcome-card">
-        <h2>¡Bienvenido, {{ user?.nombre || user?.name || 'a Potenza Gym' }}!</h2>
+        <h2>¡Bienvenido, {{ user?.nombre || user?.name || 'a Rheb' }}!</h2>
         <p>Gestiona tus entrenamientos y rutinas desde aquí.</p>
       </div>
 
@@ -124,9 +124,9 @@ function goToSales() {
 }
 
 .logout-button {
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
-  border: 2px solid var(--potenza-black);
+  background-color: var(--rheb-light-grey);
+  color: var(--rheb-dark-grey);
+  border: 1px solid var(--rheb-dark-grey);
   padding: 10px 20px;
   border-radius: 8px;
   font-size: 0.9rem;
@@ -154,7 +154,7 @@ function goToSales() {
   border-radius: 16px;
   padding: 24px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
 }
 
 .welcome-card h2 {
@@ -187,7 +187,7 @@ function goToSales() {
 
 .card:active {
   transform: scale(0.98);
-  border-color: var(--potenza-yellow);
+  border-color: var(--rheb-primary-green);
 }
 
 .card-icon {

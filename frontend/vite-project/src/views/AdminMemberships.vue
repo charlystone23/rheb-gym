@@ -201,9 +201,9 @@ function goBack() {
 }
 
 .back-button {
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
-  border: 2px solid var(--potenza-black);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
+  border: 2px solid var(--rheb-black);
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 1.2rem;
@@ -226,9 +226,9 @@ function goBack() {
 }
 
 .create-button {
-  background: linear-gradient(135deg, var(--potenza-yellow) 0%, #FFA500 100%);
-  color: var(--potenza-dark-grey);
-  border: 2px solid var(--potenza-black);
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #FFA500 100%);
+  color: var(--rheb-dark-grey);
+  border: 2px solid var(--rheb-black);
   padding: 10px 20px;
   border-radius: 8px;
   font-weight: 700;
@@ -245,7 +245,7 @@ function goBack() {
   background: var(--card-bg);
   padding: 24px;
   border-radius: 16px;
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
   box-shadow: 0 4px 12px rgba(0,0,0,0.1);
   display: flex;
   flex-direction: column;
@@ -281,10 +281,10 @@ function goBack() {
   border-radius: 8px;
   font-weight: 600;
   cursor: pointer;
-  border: 2px solid var(--potenza-black);
+  border: 2px solid var(--rheb-black);
 }
 
-.edit-btn { background: var(--potenza-dark-grey); color: var(--potenza-yellow); }
+.edit-btn { background: var(--rheb-dark-grey); color: var(--rheb-primary-green); }
 .delete-btn { background: #fee2e2; color: #dc2626; border-color: #dc2626; }
 
 .loading, .empty-state { text-align: center; padding: 40px; color: var(--potenza-grey-green); }
@@ -301,7 +301,7 @@ function goBack() {
   padding: 24px; 
   width: 100%; 
   max-width: 450px;
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
 }
 
 .modal-header {
@@ -329,8 +329,8 @@ function goBack() {
 .modal-actions { display: flex; gap: 12px; margin-top: 8px; }
 
 .cancel-button, .submit-button {
-  flex: 1; padding: 12px; border-radius: 8px; font-weight: 700; cursor: pointer; border: 2px solid var(--potenza-black);
+  flex: 1; padding: 12px; border-radius: 8px; font-weight: 700; cursor: pointer; border: 2px solid var(--rheb-black);
 }
 
-.submit-button { background: var(--potenza-yellow); }
+.submit-button { background: var(--rheb-primary-green); }
 </style>

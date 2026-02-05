@@ -1,26 +1,30 @@
 :root {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  font-family: 'Outfit', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
-  /* Potenza Gym Brand Colors */
-  --potenza-yellow: #FFD700;
-  --potenza-dark-grey: #2D2D2D;
-  --potenza-black: #000000;
-  --potenza-white: #FFFFFF;
-  --potenza-light-grey: #E5E5E5;
-  --potenza-grey-green: #4A5D4A;
-
+  /* Rheb Gym Brand Colors */
+  --rheb-deep-green: #004d40; /* Adjusted to be a rich deep green */
+  --rheb-primary-green: #00695c;
+  --rheb-accent-green: #4db6ac;
+  --rheb-dark-grey: #1a1a1a;
+  --rheb-black: #000000;
+  --rheb-white: #FFFFFF;
+  --rheb-light-grey: #F5F7F6;
+  
   /* Semantic Colors - Default Light */
-  --bg-color: var(--potenza-light-grey);
-  --page-bg: linear-gradient(180deg, var(--potenza-light-grey) 0%, var(--potenza-grey-green) 100%);
-  --text-color: var(--potenza-dark-grey);
+  --bg-color: var(--rheb-light-grey);
+  --page-bg: linear-gradient(180deg, var(--rheb-light-grey) 0%, #e0f2f1 100%);
+  --text-color: var(--rheb-dark-grey);
   --card-bg: #FFFFFF;
-  --card-border: var(--potenza-yellow);
+  --card-border: var(--rheb-primary-green);
   --input-bg: #FFFFFF;
-  --input-border: #E5E7EB;
-  --header-text: var(--potenza-dark-grey);
-  --subtitle-text: var(--potenza-grey-green);
+  --input-border: #E0E0E0;
+  --header-text: var(--rheb-deep-green);
+  --subtitle-text: var(--rheb-primary-green);
+  
+  --primary-btn-bg: var(--rheb-deep-green);
+  --primary-btn-text: var(--rheb-white);
 
   color-scheme: light dark;
   color: var(--text-color);
@@ -34,15 +38,18 @@
 }
 
 [data-theme="dark"] {
-  --bg-color: #121212;
-  --page-bg: linear-gradient(180deg, #121212 0%, #000000 100%);
-  --text-color: #E5E5E5;
-  --card-bg: #1E1E1E;
-  --card-border: var(--potenza-yellow);
-  --input-bg: #2D2D2D;
-  --input-border: #404040;
+  --bg-color: #00251a; /* Very dark green almost black */
+  --page-bg: linear-gradient(180deg, #00251a 0%, #000000 100%);
+  --text-color: #E0F2F1;
+  --card-bg: #004d40;
+  --card-border: var(--rheb-accent-green);
+  --input-bg: #00363a;
+  --input-border: #00695c;
   --header-text: #FFFFFF;
-  --subtitle-text: #9CA3AF;
+  --subtitle-text: #80cbc4;
+  
+  --primary-btn-bg: #80cbc4;
+  --primary-btn-text: #00251a;
 
   color-scheme: dark;
 }
@@ -86,25 +93,26 @@ body {
 
 a {
   font-weight: 500;
-  color: #646cff;
+  color: var(--rheb-primary-green);
   text-decoration: inherit;
   -webkit-tap-highlight-color: transparent;
 }
 
 button {
   border-radius: 8px;
-  border: 1px solid var(--potenza-black);
+  border: none;
   padding: 0.6em 1.2em;
   font-size: 1em;
-  font-weight: 700;
+  font-weight: 600;
   font-family: inherit;
-  background-color: var(--potenza-yellow);
-  color: var(--potenza-dark-grey);
+  background-color: var(--primary-btn-bg);
+  color: var(--primary-btn-text);
   cursor: pointer;
   transition: all 0.2s ease;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   min-height: 44px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 button:active {
@@ -127,4 +135,11 @@ select {
   color: var(--text-color);
   border: 2px solid var(--input-border);
   border-radius: 8px;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--rheb-primary-green);
 }

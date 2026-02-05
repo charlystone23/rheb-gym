@@ -577,7 +577,7 @@ async function confirmarDelegacion() {
     <div class="alumnos-header">
       <div class="header-left">
         <button @click="goBack" class="back-button">←</button>
-        <img src="/logo.svg" alt="Potenza Gym Logo" class="logo-small" />
+        <img src="/logo.png" alt="Rheb Logo" class="logo-small" />
         <div>
           <h1>Mis Alumnos</h1>
           <p class="subtitle" v-if="currentUser">Panel de {{ currentUser.nombre || currentUser.name }}</p>
@@ -1002,9 +1002,9 @@ async function confirmarDelegacion() {
 }
 
 .back-button {
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
-  border: 2px solid var(--potenza-black);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
+  border: 2px solid var(--rheb-black);
   border-radius: 8px;
   padding: 10px 16px;
   font-size: 1.2rem;
@@ -1056,7 +1056,7 @@ async function confirmarDelegacion() {
   align-items: center;
   gap: 12px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
 }
 
 .legend {
@@ -1067,7 +1067,7 @@ async function confirmarDelegacion() {
   flex-wrap: wrap;
   gap: 20px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
 }
 
 .legend-item {
@@ -1082,7 +1082,7 @@ async function confirmarDelegacion() {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  border: 2px solid var(--potenza-black);
+  border: 2px solid var(--rheb-black);
 }
 
 .status-indicator.green {
@@ -1119,7 +1119,7 @@ async function confirmarDelegacion() {
 
 .alumno-card:active {
   transform: scale(0.98);
-  border-color: var(--potenza-yellow);
+  border-color: var(--rheb-primary-green);
 }
 
 .alumno-info {
@@ -1168,8 +1168,8 @@ async function confirmarDelegacion() {
 
 .membership-info-chip {
   display: inline-block;
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 0.75rem;
@@ -1194,13 +1194,13 @@ async function confirmarDelegacion() {
 }
 
 .edit-alumno-button-inline:hover {
-  border-color: var(--potenza-yellow);
-  background-color: var(--potenza-dark-grey);
+  border-color: var(--rheb-primary-green);
+  background-color: var(--rheb-dark-grey);
 }
 
 .delegate-alumno-button-inline {
   background-color: var(--input-bg);
-  border: 1px solid var(--potenza-yellow);
+  border: 1px solid var(--rheb-primary-green);
   font-size: 1.1rem;
   cursor: pointer;
   padding: 6px;
@@ -1214,8 +1214,8 @@ async function confirmarDelegacion() {
 }
 
 .delegate-alumno-button-inline:hover {
-  background-color: var(--potenza-yellow);
-  color: var(--potenza-dark-grey);
+  background-color: var(--rheb-primary-green);
+  color: var(--rheb-dark-grey);
   transform: translateY(-1px);
 }
 
@@ -1285,7 +1285,7 @@ async function confirmarDelegacion() {
 .confirm-delete-btn {
   background: #ef4444;
   color: white;
-  border: 2px solid var(--potenza-black);
+  border: 2px solid var(--rheb-black);
   padding: 14px;
   border-radius: 10px;
   font-weight: 700;
@@ -1300,9 +1300,9 @@ async function confirmarDelegacion() {
 }
 
 .cancel-delete-btn {
-  background: var(--potenza-dark-grey);
+  background: var(--rheb-dark-grey);
   color: white;
-  border: 2px solid var(--potenza-black);
+  border: 2px solid var(--rheb-black);
   padding: 14px;
   border-radius: 10px;
   font-weight: 600;
@@ -1319,9 +1319,9 @@ async function confirmarDelegacion() {
 
 .history-button {
   margin-top: 12px;
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
-  border: 2px solid var(--potenza-black);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
+  border: 2px solid var(--rheb-black);
   padding: 8px 14px;
   border-radius: 8px;
   font-size: 0.8rem;
@@ -1421,7 +1421,7 @@ async function confirmarDelegacion() {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  border: 3px solid var(--potenza-black);
+  border: 3px solid var(--rheb-black);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
@@ -1445,9 +1445,9 @@ async function confirmarDelegacion() {
 }
 
 .register-payment-button {
-  background: linear-gradient(135deg, var(--potenza-yellow) 0%, #FFA500 100%);
-  color: var(--potenza-dark-grey);
-  border: 2px solid var(--potenza-black);
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #FFA500 100%);
+  color: var(--rheb-dark-grey);
+  border: 2px solid var(--rheb-black);
   padding: 10px 16px;
   border-radius: 8px;
   font-size: 0.85rem;
@@ -1471,7 +1471,7 @@ async function confirmarDelegacion() {
   border-radius: 12px;
   padding: 40px;
   text-align: center;
-  color: var(--potenza-grey-green);
+  color: var(--rheb-accent-green);
   font-size: 1rem;
 }
 
@@ -1506,14 +1506,14 @@ async function confirmarDelegacion() {
 
 .select-input:focus {
   outline: none;
-  border-color: var(--potenza-yellow);
+  border-color: var(--rheb-primary-green);
   box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.15);
 }
 
 .add-button {
-  background: linear-gradient(135deg, var(--potenza-yellow) 0%, #FFA500 100%);
-  color: var(--potenza-dark-grey);
-  border: 2px solid var(--potenza-black);
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #FFA500 100%);
+  color: var(--rheb-dark-grey);
+  border: 2px solid var(--rheb-black);
   padding: 12px 20px;
   border-radius: 10px;
   font-size: 0.95rem;
@@ -1562,7 +1562,7 @@ async function confirmarDelegacion() {
   width: 100%;
   max-width: 500px;
   box-shadow: 0 15px 50px rgba(0, 0, 0, 0.3);
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
 }
 
 .modal-header {
@@ -1570,7 +1570,7 @@ async function confirmarDelegacion() {
   justify-content: space-between;
   align-items: center;
   padding: 24px;
-  border-bottom: 2px solid var(--potenza-yellow);
+  border-bottom: 2px solid var(--rheb-primary-green);
 }
 
 .modal-header h2 {
@@ -1584,7 +1584,7 @@ async function confirmarDelegacion() {
   background: transparent;
   border: none;
   font-size: 2rem;
-  color: var(--potenza-dark-grey);
+  color: var(--rheb-dark-grey);
   cursor: pointer;
   width: 40px;
   height: 40px;
@@ -1647,7 +1647,7 @@ async function confirmarDelegacion() {
 
 .form-group input:focus {
   outline: none;
-  border-color: var(--potenza-yellow);
+  border-color: var(--rheb-primary-green);
   box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.15);
 }
 
@@ -1682,9 +1682,9 @@ async function confirmarDelegacion() {
 
 .cancel-button {
   flex: 1;
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
-  border: 2px solid var(--potenza-black);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
+  border: 2px solid var(--rheb-black);
   padding: 14px;
   border-radius: 10px;
   font-size: 1rem;
@@ -1703,9 +1703,9 @@ async function confirmarDelegacion() {
 
 .submit-button {
   flex: 1;
-  background: linear-gradient(135deg, var(--potenza-yellow) 0%, #FFA500 100%);
-  color: var(--potenza-dark-grey);
-  border: 2px solid var(--potenza-black);
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #FFA500 100%);
+  color: var(--rheb-dark-grey);
+  border: 2px solid var(--rheb-black);
   padding: 14px;
   border-radius: 10px;
   font-size: 1rem;

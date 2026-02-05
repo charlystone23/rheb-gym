@@ -716,9 +716,9 @@ function formatPrice(value) {
 }
 
 .back-button {
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
-  border: 2px solid var(--potenza-black);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
+  border: 2px solid var(--rheb-black);
   border-radius: 8px;
   padding: 10px 16px;
   font-size: 1.2rem;
@@ -746,9 +746,9 @@ h1 {
 }
 
 .create-button {
-  background: linear-gradient(135deg, var(--potenza-yellow) 0%, #FFA500 100%);
-  color: var(--potenza-dark-grey);
-  border: 2px solid var(--potenza-black);
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #FFA500 100%);
+  color: var(--rheb-dark-grey);
+  border: 2px solid var(--rheb-black);
   padding: 10px 20px;
   border-radius: 8px;
   font-weight: 700;
@@ -761,7 +761,7 @@ h1 {
   overflow-x: auto;
   background: var(--card-bg);
   border-radius: 16px;
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
@@ -777,7 +777,7 @@ h1 {
   background-color: var(--input-bg);
   color: var(--header-text);
   font-weight: 700;
-  border-bottom: 2px solid var(--potenza-yellow);
+  border-bottom: 2px solid var(--rheb-primary-green);
 }
 
 .products-table td {
@@ -836,9 +836,9 @@ h1 {
 }
 
 .sell-button-small {
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
-  border: 2px solid var(--potenza-black);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
+  border: 2px solid var(--rheb-black);
   padding: 6px 12px;
   border-radius: 6px;
   font-size: 0.85rem;
@@ -854,7 +854,7 @@ h1 {
 
 .stock-button-small {
   background-color: var(--input-bg);
-  border: 1px solid var(--potenza-yellow);
+  border: 1px solid var(--rheb-primary-green);
   padding: 6px 10px;
   border-radius: 8px;
   font-size: 1.1rem;
@@ -867,8 +867,8 @@ h1 {
 }
 
 .stock-button-small:hover {
-  background-color: var(--potenza-yellow);
-  border-color: var(--potenza-black);
+  background-color: var(--rheb-primary-green);
+  border-color: var(--rheb-black);
   transform: translateY(-1px);
 }
 
@@ -908,9 +908,9 @@ h1 {
 }
 
 .icon-button:hover {
-  border-color: var(--potenza-yellow);
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
+  border-color: var(--rheb-primary-green);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
   transform: translateY(-1px);
 }
 
@@ -926,7 +926,7 @@ h1 {
 .history-link {
   background: none;
   border: none;
-  color: var(--potenza-yellow);
+  color: var(--rheb-primary-green);
   text-decoration: underline;
   cursor: pointer;
   font-size: 0.9rem;

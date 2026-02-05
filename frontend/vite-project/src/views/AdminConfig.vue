@@ -26,7 +26,7 @@ function goBack() {
     <div class="admin-config-header">
       <div class="header-left">
         <button @click="goBack" class="back-button">←</button>
-        <img src="/logo.svg" alt="Potenza Gym Logo" class="logo-small" />
+        <img src="/logo.png" alt="Rheb Logo" class="logo-small" />
         <div>
           <h1>Configuración</h1>
           <p class="subtitle">Personaliza tu experiencia en el panel</p>
@@ -54,7 +54,7 @@ function goBack() {
         <div class="config-item disabled">
           <div class="item-info">
             <span class="item-title">Versión</span>
-            <span class="item-desc">v1.2.0 - Potenza Gym Platform</span>
+            <span class="item-desc">v1.2.0 - Rheb Platform</span>
           </div>
         </div>
       </div>
@@ -84,9 +84,9 @@ function goBack() {
 }
 
 .back-button {
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
-  border: 2px solid var(--potenza-black);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
+  border: 2px solid var(--rheb-black);
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 1.2rem;
@@ -186,18 +186,18 @@ function goBack() {
 }
 
 input:checked + .slider {
-  background-color: var(--potenza-yellow);
+  background-color: var(--rheb-primary-green);
 }
 
 input:focus + .slider {
-  box-shadow: 0 0 1px var(--potenza-yellow);
+  box-shadow: 0 0 1px var(--rheb-primary-green);
 }
 
 input:checked + .slider:before {
   -webkit-transform: translateX(26px);
   -ms-transform: translateX(26px);
   transform: translateX(26px);
-  background-color: var(--potenza-dark-grey);
+  background-color: var(--rheb-dark-grey);
 }
 
 .slider.round {

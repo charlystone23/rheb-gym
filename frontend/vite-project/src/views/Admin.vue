@@ -52,7 +52,7 @@ function goToSales() {
   <div class="admin-container">
     <div class="admin-header">
       <div class="header-left">
-        <img src="/logo.svg" alt="Potenza Gym Logo" class="logo-small" />
+        <img src="/logo.png" alt="Rheb Logo" class="logo-small" />
         <div>
           <h1>Panel Administrador</h1>
           <p class="admin-badge">ADMIN</p>
@@ -168,21 +168,21 @@ function goToSales() {
 }
 
 .admin-badge {
-  background: linear-gradient(135deg, var(--potenza-yellow) 0%, #FFA500 100%);
-  color: var(--potenza-black);
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #FFA500 100%);
+  color: var(--rheb-black);
   padding: 4px 12px;
   border-radius: 12px;
   font-size: 0.75rem;
   font-weight: 700;
   margin: 4px 0 0 0;
   display: inline-block;
-  border: 1px solid var(--potenza-black);
+  border: 1px solid var(--rheb-black);
 }
 
 .logout-button {
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
-  border: 2px solid var(--potenza-black);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
+  border: 2px solid var(--rheb-black);
   padding: 10px 20px;
   border-radius: 8px;
   font-size: 0.9rem;
@@ -210,7 +210,7 @@ function goToSales() {
   border-radius: 16px;
   padding: 24px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
 }
 
 .welcome-card h2 {
@@ -243,7 +243,7 @@ function goToSales() {
 
 .card:active {
   transform: scale(0.98);
-  border-color: var(--potenza-yellow);
+  border-color: var(--rheb-primary-green);
 }
 
 .card-icon {

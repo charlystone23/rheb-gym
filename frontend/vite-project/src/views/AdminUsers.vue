@@ -159,7 +159,7 @@ function goBack() {
     <div class="admin-users-header">
       <div class="header-left">
         <button @click="goBack" class="back-button">←</button>
-        <img src="/logo.svg" alt="Potenza Gym Logo" class="logo-small" />
+        <img src="/logo.png" alt="Rheb Logo" class="logo-small" />
         <div>
           <h1>Gestión de Usuarios</h1>
           <p class="subtitle">Administra los usuarios del sistema</p>
@@ -307,9 +307,9 @@ function goBack() {
 }
 
 .back-button {
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
-  border: 2px solid var(--potenza-black);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
+  border: 2px solid var(--rheb-black);
   border-radius: 8px;
   padding: 10px 16px;
   font-size: 1.2rem;
@@ -347,9 +347,9 @@ function goBack() {
 }
 
 .create-button {
-  background: linear-gradient(135deg, var(--potenza-yellow) 0%, #FFA500 100%);
-  color: var(--potenza-dark-grey);
-  border: 2px solid var(--potenza-black);
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #FFA500 100%);
+  color: var(--rheb-dark-grey);
+  border: 2px solid var(--rheb-black);
   padding: 10px 20px;
   border-radius: 8px;
   font-size: 0.9rem;
@@ -377,7 +377,7 @@ function goBack() {
 .loading {
   text-align: center;
   padding: 40px;
-  color: var(--potenza-grey-green);
+  color: var(--rheb-accent-green);
   font-size: 1rem;
 }
 
@@ -392,7 +392,7 @@ function goBack() {
   border-radius: 12px;
   padding: 20px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -422,17 +422,17 @@ function goBack() {
   border-radius: 12px;
   font-size: 0.75rem;
   font-weight: 700;
-  border: 1px solid var(--potenza-black);
+  border: 1px solid var(--rheb-black);
 }
 
 .role-badge.admin {
-  background: linear-gradient(135deg, var(--potenza-yellow) 0%, #FFA500 100%);
-  color: var(--potenza-black);
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #FFA500 100%);
+  color: var(--rheb-black);
 }
 
 .role-badge.entrenador {
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
 }
 
 .user-actions {
@@ -454,9 +454,9 @@ function goBack() {
 }
 
 .edit-button {
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
-  border: 2px solid var(--potenza-black);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
+  border: 2px solid var(--rheb-black);
 }
 
 .edit-button:active {
@@ -482,7 +482,7 @@ function goBack() {
   text-align: center;
   color: var(--subtitle-text);
   font-size: 1rem;
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
 }
 
 .modal-overlay {
@@ -506,7 +506,7 @@ function goBack() {
   width: 100%;
   max-width: 500px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
 }
 
 .modal-header {
@@ -566,7 +566,7 @@ function goBack() {
 .form-group input:focus,
 .form-group select:focus {
   outline: none;
-  border-color: var(--potenza-yellow);
+  border-color: var(--rheb-primary-green);
 }
 
 .error-message {
@@ -592,13 +592,13 @@ function goBack() {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
-  border: 2px solid var(--potenza-black);
+  border: 2px solid var(--rheb-black);
   min-height: 48px;
 }
 
 .cancel-button {
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
 }
 
 .cancel-button:active {
@@ -607,8 +607,8 @@ function goBack() {
 }
 
 .submit-button {
-  background: linear-gradient(135deg, var(--potenza-yellow) 0%, #FFA500 100%);
-  color: var(--potenza-dark-grey);
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #FFA500 100%);
+  color: var(--rheb-dark-grey);
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 

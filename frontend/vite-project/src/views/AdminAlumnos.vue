@@ -211,9 +211,9 @@ function isTrainerExpanded(trainerId) {
 }
 
 .back-button {
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
-  border: 2px solid var(--potenza-black);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
+  border: 2px solid var(--rheb-black);
   border-radius: 8px;
   padding: 10px 16px;
   font-size: 1.2rem;
@@ -251,9 +251,9 @@ function isTrainerExpanded(trainerId) {
 }
 
 .create-button {
-  background: linear-gradient(135deg, var(--potenza-yellow) 0%, #FFA500 100%);
-  color: var(--potenza-dark-grey);
-  border: 2px solid var(--potenza-black);
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #FFA500 100%);
+  color: var(--rheb-dark-grey);
+  border: 2px solid var(--rheb-black);
   padding: 10px 20px;
   border-radius: 8px;
   font-size: 0.9rem;
@@ -286,7 +286,7 @@ function isTrainerExpanded(trainerId) {
   flex-wrap: wrap;
   gap: 20px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
 }
 
 .legend-item {
@@ -301,7 +301,7 @@ function isTrainerExpanded(trainerId) {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  border: 2px solid var(--potenza-black);
+  border: 2px solid var(--rheb-black);
 }
 
 .status-indicator.green {
@@ -327,13 +327,13 @@ function isTrainerExpanded(trainerId) {
   border-radius: 16px;
   padding: 24px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
 }
 
 .entrenador-header {
   margin-bottom: 20px;
   padding-bottom: 16px;
-  border-bottom: 2px solid var(--potenza-yellow);
+  border-bottom: 2px solid var(--rheb-primary-green);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -345,9 +345,9 @@ function isTrainerExpanded(trainerId) {
 }
 
 .toggle-button {
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
-  border: 2px solid var(--potenza-black);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
+  border: 2px solid var(--rheb-black);
   padding: 10px 16px;
   border-radius: 8px;
   font-size: 0.85rem;
@@ -444,7 +444,7 @@ function isTrainerExpanded(trainerId) {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  border: 3px solid var(--potenza-black);
+  border: 3px solid var(--rheb-black);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
@@ -495,7 +495,7 @@ function isTrainerExpanded(trainerId) {
   width: 100%;
   max-width: 500px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
 }
 
 .modal-header {
@@ -553,7 +553,7 @@ function isTrainerExpanded(trainerId) {
 .form-group input:focus,
 .form-group select:focus {
   outline: none;
-  border-color: var(--potenza-yellow);
+  border-color: var(--rheb-primary-green);
 }
 
 .error-message {
@@ -579,7 +579,7 @@ function isTrainerExpanded(trainerId) {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
-  border: 2px solid var(--potenza-black);
+  border: 2px solid var(--rheb-black);
   min-height: 48px;
 }
 
@@ -594,8 +594,8 @@ function isTrainerExpanded(trainerId) {
 }
 
 .submit-button {
-  background: linear-gradient(135deg, var(--potenza-yellow) 0%, #FFA500 100%);
-  color: var(--potenza-dark-grey);
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #FFA500 100%);
+  color: var(--rheb-dark-grey);
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
@@ -616,6 +616,6 @@ function isTrainerExpanded(trainerId) {
   text-align: center;
   color: var(--subtitle-text);
   font-size: 1rem;
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
 }
 </style>

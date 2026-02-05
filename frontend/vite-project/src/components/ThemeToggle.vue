@@ -30,9 +30,9 @@ function handleToggle() {
 
 <style scoped>
 .theme-toggle {
-  background: var(--potenza-dark-grey);
-  border: 2px solid var(--potenza-black);
-  color: var(--potenza-yellow);
+  background: var(--rheb-dark-grey);
+  border: 2px solid var(--rheb-black);
+  color: var(--rheb-primary-green);
   padding: 8px;
   border-radius: 50%;
   width: 44px;
@@ -55,7 +55,7 @@ function handleToggle() {
 }
 
 [data-theme="dark"] .theme-toggle {
-  background: var(--potenza-yellow);
-  color: var(--potenza-dark-grey);
+  background: var(--rheb-primary-green);
+  color: var(--rheb-dark-grey);
 }
 </style>

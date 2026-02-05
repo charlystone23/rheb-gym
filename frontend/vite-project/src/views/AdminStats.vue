@@ -297,7 +297,7 @@ function goBack() {
   background: var(--card-bg);
   padding: 10px 16px;
   border-radius: 10px;
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
 }
 
 .header-filters label {
@@ -323,9 +323,9 @@ function goBack() {
 }
 
 .back-button {
-  background-color: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
-  border: 2px solid var(--potenza-black);
+  background-color: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
+  border: 2px solid var(--rheb-black);
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 1.2rem;
@@ -368,15 +368,15 @@ function goBack() {
   border-bottom: 4px solid var(--input-border);
 }
 
-.summary-card.total { border-color: var(--potenza-dark-grey); }
+.summary-card.total { border-color: var(--rheb-dark-grey); }
 .summary-card.active { border-color: #22c55e; }
 .summary-card.warning { border-color: #eab308; }
 .summary-card.danger { border-color: #ef4444; }
 .summary-card.revenue { 
-  border-color: var(--potenza-yellow); 
+  border-color: var(--rheb-primary-green); 
   background: var(--input-bg);
 }
-.summary-card.revenue .label { color: var(--potenza-yellow); }
+.summary-card.revenue .label { color: var(--rheb-primary-green); }
 .summary-card.revenue .value { color: var(--header-text); }
 
 .summary-card .label {
@@ -404,7 +404,7 @@ function goBack() {
   border-radius: 16px;
   padding: 24px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  border: 2px solid var(--potenza-yellow);
+  border: 2px solid var(--rheb-primary-green);
 }
 
 .card-header {
@@ -422,8 +422,8 @@ function goBack() {
 }
 
 .activos-badge {
-  background: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
+  background: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
   padding: 4px 8px;
   border-radius: 6px;
   font-size: 0.75rem;
@@ -474,7 +474,7 @@ function goBack() {
 
 .date-input-group input:focus {
   outline: none;
-  border-color: var(--potenza-yellow);
+  border-color: var(--rheb-primary-green);
   box-shadow: 0 0 0 4px rgba(255, 215, 0, 0.1);
   background: white;
 }
@@ -484,8 +484,8 @@ function goBack() {
 }
 
 .saldo-display {
-  background: var(--potenza-dark-grey);
-  color: var(--potenza-yellow);
+  background: var(--rheb-dark-grey);
+  color: var(--rheb-primary-green);
   padding: 12px;
   border-radius: 8px;
   display: flex;
