@@ -19,9 +19,23 @@ app.use(cors({
 app.use(express.json());
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGO_URI)
+const clientOptions = { serverApi: { version: '1', strict: true, deprecationErrors: true } };
+
+mongoose.connect(process.env.MONGO_URI, clientOptions)
     .then(() => console.log('MongoDB connected successfully'))
     .catch(err => console.error('MongoDB connection error:', err));
+
+mongoose.connection.on('connected', () => {
+    console.log('Mongoose connected to DB Cluster');
+});
+
+mongoose.connection.on('error', (err) => {
+    console.error('Mongoose connection error:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+    console.log('Mongoose disconnected');
+});
 
 // Test Route
 app.get('/api/health', (req, res) => {
