@@ -83,7 +83,7 @@ function getUltimoPago(alumno) {
   return pagosOrdenados[0]
 }
 
-function getUltimosPagos(alumno, cantidad = 3) {
+function getUltimosPagos(alumno, cantidad = 6) {
   if (!alumno.historialPagos || alumno.historialPagos.length === 0) {
     return []
   }
@@ -472,10 +472,7 @@ async function registrarPago() {
       new Date(b.fecha) - new Date(a.fecha)
     )
     
-    // Mantener solo los últimos 3 pagos (local display)
-    if (alumnos.value[alumnoIndex].historialPagos.length > 3) {
-      alumnos.value[alumnoIndex].historialPagos = alumnos.value[alumnoIndex].historialPagos.slice(0, 3)
-    }
+    // Do not truncate local history, let the view helper handle it
     
     closePaymentModal()
   } catch (e) {
@@ -630,23 +627,23 @@ async function confirmarDelegacion() {
               
               <!-- Botón para ver historial -->
               <button 
-                v-if="getUltimosPagos(alumno, 3).length > 0"
+                v-if="getUltimosPagos(alumno).length > 0"
                 @click="toggleHistorial(alumno.id)" 
                 class="history-button"
               >
-                {{ isHistorialVisible(alumno.id) ? 'Ocultar' : 'Ver' }} Historial ({{ getUltimosPagos(alumno, 3).length }})
+                {{ isHistorialVisible(alumno.id) ? 'Ocultar' : 'Ver' }} Historial ({{ getUltimosPagos(alumno).length }})
               </button>
             </div>
             
             <!-- Historial de pagos (colapsable) -->
             <div 
               class="payment-history" 
-              v-if="getUltimosPagos(alumno, 3).length > 0 && isHistorialVisible(alumno.id)"
+              v-if="getUltimosPagos(alumno).length > 0 && isHistorialVisible(alumno.id)"
             >
-              <p class="history-label">Historial de pagos (últimos 3):</p>
+              <p class="history-label">Historial de pagos (últimos 6):</p>
               <div class="history-list">
                 <div 
-                  v-for="(pago, index) in getUltimosPagos(alumno, 3)" 
+                  v-for="(pago, index) in getUltimosPagos(alumno)" 
                   :key="index"
                   class="history-item"
                 >

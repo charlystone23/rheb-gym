@@ -8,6 +8,15 @@ const entrenadores = ref([])
 const isLoading = ref(false)
 const error = ref("")
 const expandedTrainers = ref({})
+const expandedHistory = ref({})
+
+function toggleHistory(alumnoId) {
+  expandedHistory.value[alumnoId] = !expandedHistory.value[alumnoId]
+}
+
+function isHistoryExpanded(alumnoId) {
+  return expandedHistory.value[alumnoId] || false
+}
 
 onMounted(async () => {
   try {
@@ -21,6 +30,16 @@ onMounted(async () => {
     isLoading.value = false
   }
 })
+
+function getUltimosPagos(alumno, cantidad = 6) {
+  if (!alumno.historialPagos || alumno.historialPagos.length === 0) {
+    return []
+  }
+  const pagosOrdenados = [...alumno.historialPagos].sort((a, b) => 
+    new Date(b.fecha) - new Date(a.fecha)
+  )
+  return pagosOrdenados.slice(0, cantidad)
+}
 
 function getUltimoPago(alumno) {
   if (!alumno.historialPagos || alumno.historialPagos.length === 0) {
@@ -153,6 +172,25 @@ function isTrainerExpanded(trainerId) {
                     <span class="payment-type">({{ getUltimoPago(alumno).tipo }})</span>
                   </p>
                   <p v-else class="payment-info">Sin pagos registrados</p>
+                  
+                  <!-- Historial Toggle -->
+                  <button 
+                    v-if="getUltimosPagos(alumno).length > 0"
+                    @click="toggleHistory(alumno._id || alumno.id)" 
+                    class="history-toggle-btn"
+                  >
+                    {{ isHistoryExpanded(alumno._id || alumno.id) ? 'Ocultar' : 'Ver' }} Historial
+                  </button>
+
+                  <!-- Historial List -->
+                  <div v-if="isHistoryExpanded(alumno._id || alumno.id)" class="admin-history-list">
+                    <p class="history-title">Últimos pagos:</p>
+                    <div v-for="(pago, i) in getUltimosPagos(alumno)" :key="i" class="mini-history-item">
+                      <span class="mini-date">{{ formatDate(pago.fecha) }}</span>
+                      <span class="mini-type">{{ pago.tipo }}</span>
+                      <span v-if="pago.membresia" class="mini-membresia">{{ pago.membresia.nombre }}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div class="status-container">
@@ -618,4 +656,45 @@ function isTrainerExpanded(trainerId) {
   font-size: 1rem;
   border: 2px solid var(--rheb-primary-green);
 }
+.history-toggle-btn {
+  background: none;
+  border: none;
+  color: var(--rheb-primary-green);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  margin-top: 4px;
+  text-decoration: underline;
+}
+
+.admin-history-list {
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--card-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+}
+
+.history-title {
+  font-size: 0.75rem;
+  color: var(--subtitle-text);
+  margin: 0 0 4px 0;
+}
+
+.mini-history-item {
+  display: flex;
+  gap: 8px;
+  font-size: 0.8rem;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--input-border);
+}
+
+.mini-history-item:last-child {
+  border-bottom: none;
+}
+
+.mini-date { font-weight: 600; color: var(--header-text); }
+.mini-type { color: var(--subtitle-text); }
+.mini-membresia { color: var(--rheb-accent-green); margin-left: auto; }
 </style>
