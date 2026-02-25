@@ -46,6 +46,10 @@ function goToConfig() {
 function goToSales() {
   router.push("/sales")
 }
+
+function goToSchedules() {
+  router.push("/admin/schedules")
+}
 </script>
 
 <template>
@@ -102,11 +106,10 @@ function goToSales() {
           <p>Configura planes, precios y revisa pagos</p>
         </div>
 
-        <div class="card disabled">
+        <div class="card" @click="goToSchedules">
           <div class="card-icon">📅</div>
           <h3>Horarios y Clases</h3>
           <p>Configura horarios y clases disponibles</p>
-          <span class="coming-soon">Próximamente</span>
         </div>
 
         <div class="card" @click="goToConfig">

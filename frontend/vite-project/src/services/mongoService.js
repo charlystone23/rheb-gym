@@ -345,5 +345,116 @@ export const MongoService = {
             console.error("API Error:", error);
             throw error;
         }
+    },
+
+    // --- HORARIOS ---
+    async getHorarios() {
+        try {
+            const response = await fetch(`${API_URL}/horarios`);
+            if (!response.ok) throw new Error('Error al obtener horarios');
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            return [];
+        }
+    },
+
+    async createHorario(data) {
+        try {
+            const response = await fetch(`${API_URL}/horarios`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) throw new Error('Error al crear horario');
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
+    async ensureMasterSchedule(entrenadorId) {
+        try {
+            const response = await fetch(`${API_URL}/horarios/ensure-master`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ entrenadorId })
+            });
+            if (!response.ok) throw new Error('Error al asegurar horario maestro');
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
+    async updateHorario(id, data) {
+        try {
+            const response = await fetch(`${API_URL}/horarios/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) throw new Error('Error al actualizar horario');
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
+    async deleteHorario(id) {
+        try {
+            const response = await fetch(`${API_URL}/horarios/${id}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) throw new Error('Error al eliminar horario');
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
+    // --- ASIGNACIONES ---
+    async addAsignacion(horarioId, { alumnoId, dia, hora }) {
+        try {
+            const response = await fetch(`${API_URL}/horarios/${horarioId}/asignaciones`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ alumnoId, dia, hora })
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Error al asignar alumno');
+            return data;
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
+    async removeAsignacion(horarioId, asignacionId) {
+        try {
+            const response = await fetch(`${API_URL}/horarios/${horarioId}/asignaciones/${asignacionId}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) throw new Error('Error al eliminar asignación');
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
+    async getAlumnoAsignaciones(alumnoId) {
+        try {
+            const response = await fetch(`${API_URL}/alumnos/${alumnoId}/asignaciones`);
+            if (!response.ok) throw new Error('Error al obtener asignaciones');
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            return { total: 0, diasPermitidos: null };
+        }
     }
 };

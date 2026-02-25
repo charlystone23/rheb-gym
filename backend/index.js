@@ -66,6 +66,19 @@ const MembresiaSchema = new mongoose.Schema({
     diasPorSemana: { type: Number }
 });
 
+const HorarioSchema = new mongoose.Schema({
+    nombre: { type: String, required: true },
+    horaInicio: { type: Number, required: true },
+    horaFin: { type: Number, required: true },
+    dias: [{ type: String }],
+    entrenadores: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // up to 3
+    asignaciones: [{
+        alumno: { type: mongoose.Schema.Types.ObjectId, ref: 'Alumno' },
+        dia: { type: String },
+        hora: { type: Number }
+    }]
+}, { timestamps: true });
+
 const PagoSchema = new mongoose.Schema({
     fecha: { type: Date, required: true },
     tipo: { type: String, required: true }, // 'efectivo', 'transferencia', 'otros'
@@ -90,6 +103,7 @@ const User = mongoose.model('User', UserSchema);
 const Alumno = mongoose.model('Alumno', AlumnoSchema);
 const Rutina = mongoose.model('Rutina', RutinaSchema);
 const Membresia = mongoose.model('Membresia', MembresiaSchema);
+const Horario = mongoose.model('Horario', HorarioSchema);
 
 // --- API Routes ---
 
@@ -301,7 +315,221 @@ app.delete('/api/membresias/:id', async (req, res) => {
     }
 });
 
-// CREATE Rutina
+// --- HORARIO ROUTES ---
+
+// GET All Horarios
+app.get('/api/horarios', async (req, res) => {
+    try {
+        const horarios = await Horario.find()
+            .populate('entrenadores', 'nombre')
+            .populate('asignaciones.alumno', 'nombre apellido historialPagos');
+        res.json(horarios);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// CREATE Horario
+app.post('/api/horarios', async (req, res) => {
+    try {
+        const newHorario = new Horario(req.body);
+        const saved = await newHorario.save();
+        const populated = await Horario.findById(saved._id)
+            .populate('entrenadores', 'nombre')
+            .populate('asignaciones.alumno', 'nombre apellido historialPagos');
+        res.status(201).json(populated);
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// ENSURE Master Horario for Trainer
+app.post('/api/horarios/ensure-master', async (req, res) => {
+    try {
+        const { entrenadorId } = req.body;
+        if (!entrenadorId) return res.status(400).json({ error: 'Falta entrenadorId' });
+
+        // Find existing master schedule for this trainer
+        let masterHorario = await Horario.findOne({
+            entrenadores: entrenadorId,
+            dias: { $all: ['lunes', 'martes', 'miercoles', 'jueves', 'viernes'] },
+            horaInicio: 7,
+            horaFin: 23
+        });
+
+        if (!masterHorario) {
+            // Create a master schedule if none exists
+            masterHorario = new Horario({
+                nombre: `Horario Maestro - ${entrenadorId}`,
+                horaInicio: 7,
+                horaFin: 23,
+                dias: ['lunes', 'martes', 'miercoles', 'jueves', 'viernes'],
+                entrenadores: [entrenadorId]
+            });
+            await masterHorario.save();
+        }
+
+        const populated = await Horario.findById(masterHorario._id)
+            .populate('entrenadores', 'nombre')
+            .populate('asignaciones.alumno', 'nombre apellido historialPagos');
+
+        res.status(200).json(populated);
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// UPDATE Horario
+app.put('/api/horarios/:id', async (req, res) => {
+    try {
+        // Cap entrenadores to max 3
+        if (req.body.entrenadores && req.body.entrenadores.length > 3) {
+            return res.status(400).json({ error: 'Máximo 3 entrenadores por horario' });
+        }
+        const updated = await Horario.findByIdAndUpdate(req.params.id, req.body, { new: true })
+            .populate('entrenadores', 'nombre')
+            .populate('asignaciones.alumno', 'nombre apellido historialPagos');
+        if (!updated) return res.status(404).json({ error: 'Horario no encontrado' });
+        res.json(updated);
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// DELETE Horario
+app.delete('/api/horarios/:id', async (req, res) => {
+    try {
+        await Horario.findByIdAndDelete(req.params.id);
+        res.json({ message: 'Horario eliminado' });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// --- ASIGNACION ROUTES ---
+
+// Helper: get total weekly slots assigned to a student across ALL horarios
+async function getTotalAsignacionesAlumno(alumnoId) {
+    const horarios = await Horario.find({ 'asignaciones.alumno': alumnoId });
+    let total = 0;
+    horarios.forEach(h => {
+        total += h.asignaciones.filter(a => a.alumno.toString() === alumnoId.toString()).length;
+    });
+    return total;
+}
+
+// Helper: get student's membership diasPorSemana
+async function getDiasPermitidos(alumno) {
+    if (!alumno.historialPagos || alumno.historialPagos.length === 0) return null;
+    const lastPago = alumno.historialPagos[alumno.historialPagos.length - 1];
+    const membNombre = lastPago?.membresia?.nombre;
+    if (!membNombre) return null;
+    const memb = await Membresia.findOne({ nombre: membNombre });
+    return memb?.diasPorSemana ?? null;
+}
+
+// POST /api/horarios/:id/asignaciones — assign a student to a day+hour slot
+app.post('/api/horarios/:id/asignaciones', async (req, res) => {
+    try {
+        const { alumnoId, dia, hora } = req.body;
+
+        const horario = await Horario.findById(req.params.id);
+        if (!horario) return res.status(404).json({ error: 'Horario no encontrado' });
+
+        // Validate slot is within block's hours
+        if (hora < horario.horaInicio || hora >= horario.horaFin) {
+            return res.status(400).json({ error: `La hora ${hora} no está dentro del horario (${horario.horaInicio}-${horario.horaFin})` });
+        }
+        // Validate day is in block
+        if (!horario.dias.includes(dia)) {
+            return res.status(400).json({ error: `El día ${dia} no pertenece a este horario` });
+        }
+        // Validate student not already in this exact slot
+        const yaAsignado = horario.asignaciones.some(
+            a => a.alumno.toString() === alumnoId && a.dia === dia && a.hora === Number(hora)
+        );
+        if (yaAsignado) {
+            return res.status(400).json({ error: 'El alumno ya está asignado a este turno' });
+        }
+
+        // Membership cap check
+        const alumno = await Alumno.findById(alumnoId);
+        if (!alumno) return res.status(404).json({ error: 'Alumno no encontrado' });
+
+        const diasPermitidos = await getDiasPermitidos(alumno);
+        if (diasPermitidos !== null) {
+            const totalActual = await getTotalAsignacionesAlumno(alumnoId);
+            if (totalActual >= diasPermitidos) {
+                return res.status(400).json({
+                    error: `El alumno ya alcanzó el límite de su membresía (${diasPermitidos} días/semana)`
+                });
+            }
+        }
+
+        // Slot capacity check: max 20 students per day+hour across ALL horarios
+        const MAX_POR_TURNO = 20;
+        const todosHorariosConSlot = await Horario.find({
+            asignaciones: { $elemMatch: { dia, hora: Number(hora) } }
+        });
+        let slotTotal = 0;
+        todosHorariosConSlot.forEach(h => {
+            slotTotal += h.asignaciones.filter(a => a.dia === dia && a.hora === Number(hora)).length;
+        });
+        if (slotTotal >= MAX_POR_TURNO) {
+            return res.status(400).json({
+                error: `El turno de las ${hora}:00hs ya alcanzó el límite de ${MAX_POR_TURNO} alumnos`
+            });
+        }
+
+        // Add assignment
+        horario.asignaciones.push({ alumno: alumnoId, dia, hora: Number(hora) });
+        await horario.save();
+
+        const populated = await Horario.findById(horario._id)
+            .populate('entrenadores', 'nombre')
+            .populate('asignaciones.alumno', 'nombre apellido historialPagos');
+
+        res.status(201).json(populated);
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// DELETE /api/horarios/:id/asignaciones/:asignacionId — remove an assignment
+app.delete('/api/horarios/:id/asignaciones/:asignacionId', async (req, res) => {
+    try {
+        const horario = await Horario.findById(req.params.id);
+        if (!horario) return res.status(404).json({ error: 'Horario no encontrado' });
+
+        horario.asignaciones = horario.asignaciones.filter(
+            a => a._id.toString() !== req.params.asignacionId
+        );
+        await horario.save();
+
+        const populated = await Horario.findById(horario._id)
+            .populate('entrenadores', 'nombre')
+            .populate('asignaciones.alumno', 'nombre apellido historialPagos');
+
+        res.json(populated);
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// GET /api/alumnos/:id/asignaciones — get student's weekly slot count + limit
+app.get('/api/alumnos/:id/asignaciones', async (req, res) => {
+    try {
+        const alumno = await Alumno.findById(req.params.id);
+        if (!alumno) return res.status(404).json({ error: 'Alumno no encontrado' });
+
+        const total = await getTotalAsignacionesAlumno(req.params.id);
+        const diasPermitidos = await getDiasPermitidos(alumno);
+
+        res.json({ total, diasPermitidos });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // ADD Payment
 app.post('/api/alumnos/:id/pagos', async (req, res) => {

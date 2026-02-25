@@ -38,6 +38,10 @@ const isLoading = ref(false)
 
 const currentUser = ref(null)
 
+// Date picker toggle: true = native date picker, false = manual text
+const useDatePickerNuevo = ref(true)
+const useDatePickerPago = ref(true)
+
 onMounted(async () => {
   try {
     const userStr = localStorage.getItem('user')
@@ -257,6 +261,24 @@ function handleDateInput(event) {
   } else if (input.id === 'fechaPagoPago') {
     nuevoPago.value.fechaPago = finalValue
   }
+}
+
+// Convert yyyy-mm-dd (native <input type="date">) ↔ dd/mm/yyyy
+function nativeDateToDisplay(value) {
+  if (!value) return ""
+  const [y, m, d] = value.split("-")
+  return `${d}/${m}/${y}`
+}
+function displayToNativeDate(value) {
+  if (!value || !/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return ""
+  const [d, m, y] = value.split("/")
+  return `${y}-${m}-${d}`
+}
+function handleNativeDateNuevo(e) {
+  nuevoAlumno.value.fechaPago = nativeDateToDisplay(e.target.value)
+}
+function handleNativeDatePago(e) {
+  nuevoPago.value.fechaPago = nativeDateToDisplay(e.target.value)
 }
 
 async function agregarAlumno() {
@@ -768,18 +790,33 @@ async function confirmarDelegacion() {
 
           <!-- Campos de Pago solo si NO estamos editando -->
           <div v-if="!isEditing">
-            <div class="form-group">
-              <label for="fechaPago">Fecha de Último Pago * (dd/mm/yyyy)</label>
-            <input
-              id="fechaPago"
-              v-model="nuevoAlumno.fechaPago"
-              type="text"
-              placeholder="dd/mm/yyyy"
-              @input="handleDateInput"
-              maxlength="10"
-              required
-            />
-          </div>
+          <div class="form-group">
+              <div class="date-field-header">
+                <label for="fechaPago">Fecha de Último Pago *</label>
+                <button type="button" class="date-toggle-btn" @click="useDatePickerNuevo = !useDatePickerNuevo">
+                  {{ useDatePickerNuevo ? '⌨️ Ingresar manual' : '📅 Usar calendario' }}
+                </button>
+              </div>
+              <!-- Native date picker -->
+              <input
+                v-if="useDatePickerNuevo"
+                id="fechaPagoCalendar"
+                type="date"
+                :value="displayToNativeDate(nuevoAlumno.fechaPago)"
+                @change="handleNativeDateNuevo"
+                :max="new Date().toISOString().slice(0,10)"
+              />
+              <!-- Manual text input -->
+              <input
+                v-else
+                id="fechaPago"
+                v-model="nuevoAlumno.fechaPago"
+                type="text"
+                placeholder="dd/mm/yyyy"
+                @input="handleDateInput"
+                maxlength="10"
+              />
+            </div>
 
           <div class="form-group">
             <label for="tipoPagoNuevo">Tipo de Pago *</label>
@@ -851,15 +888,30 @@ async function confirmarDelegacion() {
         
         <form @submit.prevent="registrarPago" class="modal-form">
           <div class="form-group">
-            <label for="fechaPagoPago">Fecha de Pago * (dd/mm/yyyy)</label>
+            <div class="date-field-header">
+              <label for="fechaPagoPago">Fecha de Pago *</label>
+              <button type="button" class="date-toggle-btn" @click="useDatePickerPago = !useDatePickerPago">
+                {{ useDatePickerPago ? '⌨️ Ingresar manual' : '📅 Usar calendario' }}
+              </button>
+            </div>
+            <!-- Native date picker -->
             <input
+              v-if="useDatePickerPago"
+              id="fechaPagoPagoCalendar"
+              type="date"
+              :value="displayToNativeDate(nuevoPago.fechaPago)"
+              @change="handleNativeDatePago"
+              :max="new Date().toISOString().slice(0,10)"
+            />
+            <!-- Manual text input -->
+            <input
+              v-else
               id="fechaPagoPago"
               v-model="nuevoPago.fechaPago"
               type="text"
               placeholder="dd/mm/yyyy"
               @input="handleDateInput"
               maxlength="10"
-              required
             />
           </div>
 
@@ -1484,6 +1536,27 @@ async function confirmarDelegacion() {
   border-bottom: 1px solid var(--input-border);
 }
 
+.date-field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.date-toggle-btn {
+  background: transparent;
+  border: 1.5px solid var(--rheb-primary-green);
+  color: var(--rheb-primary-green);
+  border-radius: 20px;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+.date-toggle-btn:hover { background: rgba(34,197,94,0.1); }
+
 .select-input {
   padding: 12px 16px;
   border: 2px solid var(--input-border);
@@ -1545,10 +1618,12 @@ async function confirmarDelegacion() {
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: 20px;
+  padding-top: env(safe-area-inset-top, 20px);
   z-index: 1000;
+  overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1558,8 +1633,14 @@ async function confirmarDelegacion() {
   padding: 32px;
   width: 100%;
   max-width: 500px;
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
   box-shadow: 0 15px 50px rgba(0, 0, 0, 0.3);
   border: 2px solid var(--rheb-primary-green);
+  /* Smooth scrolling on iOS */
+  -webkit-overflow-scrolling: touch;
+  /* Ensure modal sits at top with breathing room on mobile */
+  margin: auto 0;
 }
 
 .modal-header {
