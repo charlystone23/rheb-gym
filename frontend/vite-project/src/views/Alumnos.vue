@@ -395,14 +395,29 @@ function openPaymentModal(alumno) {
   showPaymentModal.value = true
   error.value = ""
   
-  // Set default membership (3 days)
-  const defaultM = membresias.value.find(m => m.nombre.includes('3 días')) || membresias.value[0]
+  // Determinar la membresía por defecto: la última del alumno o la de "3 días"/primera
+  let defaultMembresiaId = ""
+  const ultimoPago = getUltimoPago(alumno)
+  
+  if (ultimoPago && ultimoPago.membresia && ultimoPago.membresia.nombre) {
+    // Buscar el ID de la membresía basándose en el nombre de la pasada
+    const mEncontrada = membresias.value.find(m => m.nombre === ultimoPago.membresia.nombre)
+    if (mEncontrada) {
+      defaultMembresiaId = mEncontrada._id
+    }
+  }
+  
+  // Si no se encontró por la del alumno, usar por defecto 3 días
+  if (!defaultMembresiaId) {
+    const defaultM = membresias.value.find(m => m.nombre.includes('3 días')) || membresias.value[0]
+    if (defaultM) defaultMembresiaId = defaultM._id
+  }
   
   nuevoPago.value = {
     fechaPago: "",
     tipoPago: "efectivo",
     detalleOtros: "",
-    membresiaId: defaultM?._id || ""
+    membresiaId: defaultMembresiaId
   }
 }
 
@@ -804,6 +819,7 @@ async function confirmarDelegacion() {
                 type="date"
                 :value="displayToNativeDate(nuevoAlumno.fechaPago)"
                 @change="handleNativeDateNuevo"
+                @click="$event.target.showPicker ? $event.target.showPicker() : null"
                 :max="new Date().toISOString().slice(0,10)"
               />
               <!-- Manual text input -->
@@ -901,6 +917,7 @@ async function confirmarDelegacion() {
               type="date"
               :value="displayToNativeDate(nuevoPago.fechaPago)"
               @change="handleNativeDatePago"
+              @click="$event.target.showPicker ? $event.target.showPicker() : null"
               :max="new Date().toISOString().slice(0,10)"
             />
             <!-- Manual text input -->
@@ -1727,6 +1744,12 @@ async function confirmarDelegacion() {
   outline: none;
   border-color: var(--rheb-primary-green);
   box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.15);
+}
+
+.form-group input[type="date"] {
+  -webkit-appearance: auto;
+  appearance: auto;
+  cursor: pointer;
 }
 
 .error-message {
