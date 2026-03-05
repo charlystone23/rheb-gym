@@ -18,13 +18,17 @@ const nuevoAlumno = ref({
   fechaPago: "",
   tipoPago: "efectivo",
   detalleOtros: "",
-  membresiaId: "" // ID de la membresía seleccionada
+  membresiaId: "", // ID de la membresía seleccionada
+  descuentoActivo: false,
+  montoDescuento: ""
 })
 const nuevoPago = ref({
   fechaPago: "",
   tipoPago: "efectivo",
   detalleOtros: "",
-  membresiaId: ""
+  membresiaId: "",
+  descuentoActivo: false,
+  montoDescuento: ""
 })
 const membresias = ref([])
 const error = ref("")
@@ -180,7 +184,12 @@ function openModal() {
     nombre: "",
     apellido: "",
     celular: "",
-    fechaPago: "" // Not used for editing but needed for object structure if any
+    fechaPago: "", // Not used for editing but needed for object structure if any
+    tipoPago: "efectivo",
+    detalleOtros: "",
+    membresiaId: membresias.value.find(m => m.nombre.includes('3 días'))?._id || membresias.value[0]?._id || "",
+    descuentoActivo: false,
+    montoDescuento: ""
   }
 }
 
@@ -209,7 +218,9 @@ function closeModal() {
     fechaPago: "",
     tipoPago: "efectivo",
     detalleOtros: "",
-    membresiaId: membresias.value.find(m => m.nombre.includes('3 días'))?._id || membresias.value[0]?._id || ""
+    membresiaId: membresias.value.find(m => m.nombre.includes('3 días'))?._id || membresias.value[0]?._id || "",
+    descuentoActivo: false,
+    montoDescuento: ""
   }
 }
 
@@ -359,6 +370,13 @@ async function agregarAlumno() {
   // a temp ID for local view until refresh or use the response
   const selectedM = membresias.value.find(m => m._id === nuevoAlumno.value.membresiaId)
   
+  let montoCalculado = selectedM ? selectedM.precio : 0
+  if (nuevoAlumno.value.tipoPago === 'otros' && nuevoAlumno.value.descuentoActivo) {
+    if (nuevoAlumno.value.montoDescuento !== "" && !isNaN(Number(nuevoAlumno.value.montoDescuento))) {
+      montoCalculado = Number(nuevoAlumno.value.montoDescuento)
+    }
+  }
+
   const alumnoData = {
     nombre: nuevoAlumno.value.nombre.trim(),
     apellido: nuevoAlumno.value.apellido.trim(),
@@ -373,7 +391,7 @@ async function agregarAlumno() {
         nombre: selectedM.nombre,
         precio: selectedM.precio
       } : null,
-      monto: selectedM ? selectedM.precio : 0
+      monto: montoCalculado
     }]
   }
   
@@ -417,7 +435,9 @@ function openPaymentModal(alumno) {
     fechaPago: "",
     tipoPago: "efectivo",
     detalleOtros: "",
-    membresiaId: defaultMembresiaId
+    membresiaId: defaultMembresiaId,
+    descuentoActivo: false,
+    montoDescuento: ""
   }
 }
 
@@ -429,7 +449,9 @@ function closePaymentModal() {
     fechaPago: "",
     tipoPago: "efectivo",
     detalleOtros: "",
-    membresiaId: ""
+    membresiaId: "",
+    descuentoActivo: false,
+    montoDescuento: ""
   }
 }
 
@@ -483,6 +505,13 @@ async function registrarPago() {
   
   const selectedM = membresias.value.find(m => m._id === nuevoPago.value.membresiaId)
 
+  let montoCalculado = selectedM ? selectedM.precio : 0
+  if (nuevoPago.value.tipoPago === 'otros' && nuevoPago.value.descuentoActivo) {
+    if (nuevoPago.value.montoDescuento !== "" && !isNaN(Number(nuevoPago.value.montoDescuento))) {
+      montoCalculado = Number(nuevoPago.value.montoDescuento)
+    }
+  }
+
   const nuevoPagoObj = {
     fecha: fechaPagoDate,
     tipo: tipoFinal,
@@ -490,7 +519,7 @@ async function registrarPago() {
       nombre: selectedM.nombre,
       precio: selectedM.precio
     } : null,
-    monto: selectedM ? selectedM.precio : 0
+    monto: montoCalculado
   }
   
   try {
@@ -656,7 +685,7 @@ async function confirmarDelegacion() {
                 {{ formatDate(getUltimoPago(alumno).fecha) }} 
                 <span class="payment-type">({{ getUltimoPago(alumno).tipo }})</span>
                 <span v-if="getUltimoPago(alumno).membresia" class="membership-info-chip">
-                  {{ getUltimoPago(alumno).membresia.nombre }} - ${{ getUltimoPago(alumno).membresia.precio.toLocaleString() }}
+                  {{ getUltimoPago(alumno).membresia.nombre }} - ${{ (getUltimoPago(alumno).monto ?? getUltimoPago(alumno).membresia.precio).toLocaleString() }}
                 </span>
               </p>
               <p class="payment-date" v-else>Sin pagos registrados</p>
@@ -687,7 +716,7 @@ async function confirmarDelegacion() {
                   <span class="history-date">{{ formatDate(pago.fecha) }}</span>
                   <span class="history-type">{{ pago.tipo }}</span>
                   <span v-if="pago.membresia" class="history-membresia">
-                    {{ pago.membresia.nombre }} (${{ pago.membresia.precio.toLocaleString() }})
+                    {{ pago.membresia.nombre }} (${{ (pago.monto ?? pago.membresia.precio).toLocaleString() }})
                   </span>
                 </div>
               </div>
@@ -859,6 +888,29 @@ async function confirmarDelegacion() {
             />
           </div>
 
+          <div class="form-group checkbox-group" v-if="nuevoAlumno.tipoPago === 'otros'">
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                v-model="nuevoAlumno.descuentoActivo"
+                @change="() => { if(nuevoAlumno.descuentoActivo) nuevoAlumno.detalleOtros = 'Descuento' }"
+              />
+              Aplicar Descuento
+            </label>
+          </div>
+
+          <div class="form-group" v-if="nuevoAlumno.tipoPago === 'otros' && nuevoAlumno.descuentoActivo">
+            <label for="montoDescuentoNuevo">Monto (Final) *</label>
+            <input
+              id="montoDescuentoNuevo"
+              v-model="nuevoAlumno.montoDescuento"
+              type="number"
+              min="0"
+              placeholder="Ingrese el monto con descuento"
+              required
+            />
+          </div>
+
           <div class="form-group">
             <label for="membresiaNuevo">Membresía *</label>
             <select
@@ -967,6 +1019,29 @@ async function confirmarDelegacion() {
               v-model="nuevoPago.detalleOtros"
               type="text"
               placeholder="Especifica el tipo de pago"
+              required
+            />
+          </div>
+
+          <div class="form-group checkbox-group" v-if="nuevoPago.tipoPago === 'otros'">
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                v-model="nuevoPago.descuentoActivo"
+                @change="() => { if(nuevoPago.descuentoActivo) nuevoPago.detalleOtros = 'Descuento' }"
+              />
+              Aplicar Descuento
+            </label>
+          </div>
+
+          <div class="form-group" v-if="nuevoPago.tipoPago === 'otros' && nuevoPago.descuentoActivo">
+            <label for="montoDescuentoPago">Monto (Final) *</label>
+            <input
+              id="montoDescuentoPago"
+              v-model="nuevoPago.montoDescuento"
+              type="number"
+              min="0"
+              placeholder="Ingrese el monto con descuento"
               required
             />
           </div>
@@ -1224,6 +1299,7 @@ async function confirmarDelegacion() {
   font-size: 0.85rem;
   font-weight: 500;
   text-transform: capitalize;
+  margin-left: 6px;
 }
 
 .next-payment {
@@ -1458,6 +1534,7 @@ async function confirmarDelegacion() {
   background: var(--card-bg);
   border-radius: 4px;
   border: 1px solid var(--input-border);
+  margin-left: 8px;
 }
 
 .history-membresia {
@@ -1728,7 +1805,7 @@ async function confirmarDelegacion() {
   color: var(--header-text);
 }
 
-.form-group input,
+.form-group input:not([type="checkbox"]),
 .form-group select {
   padding: 12px;
   border: 2px solid var(--input-border);
@@ -1740,7 +1817,7 @@ async function confirmarDelegacion() {
   appearance: none;
 }
 
-.form-group input:focus {
+.form-group input:not([type="checkbox"]):focus {
   outline: none;
   border-color: var(--rheb-primary-green);
   box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.15);
@@ -1750,6 +1827,37 @@ async function confirmarDelegacion() {
   -webkit-appearance: auto;
   appearance: auto;
   cursor: pointer;
+}
+
+.checkbox-group {
+  flex-direction: row;
+  align-items: center;
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--header-text);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  /* Override general .form-group input styles */
+  -webkit-appearance: auto !important;
+  appearance: auto !important;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  accent-color: var(--rheb-primary-green);
 }
 
 .error-message {
