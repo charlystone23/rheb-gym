@@ -53,16 +53,17 @@ function getUltimoPago(alumno) {
 
 function getPaymentStatus(alumno) {
   const ultimoPago = getUltimoPago(alumno)
-  if (!ultimoPago) return "red"
-  
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
   
-  const fechaPagoDate = new Date(ultimoPago.fecha)
-  fechaPagoDate.setHours(0, 0, 0, 0)
-  
-  const proximaFechaPago = new Date(fechaPagoDate)
-  proximaFechaPago.setDate(proximaFechaPago.getDate() + 30)
+  let proximaFechaPago = new Date()
+  if (!ultimoPago) {
+    proximaFechaPago = new Date(alumno.fechaRegistro || alumno.createdAt || hoy)
+  } else {
+    proximaFechaPago = new Date(ultimoPago.fecha)
+    proximaFechaPago.setDate(proximaFechaPago.getDate() + 30)
+  }
+  proximaFechaPago.setHours(0, 0, 0, 0)
   
   const diasHastaPago = Math.ceil((proximaFechaPago - hoy) / (1000 * 60 * 60 * 24))
   
@@ -85,14 +86,17 @@ function formatDate(date) {
 
 function getDaysUntilPayment(alumno) {
   const ultimoPago = getUltimoPago(alumno)
-  if (!ultimoPago) return -999
-  
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
   
-  const fechaPago = new Date(ultimoPago.fecha)
-  const proximaFecha = new Date(fechaPago)
-  proximaFecha.setDate(proximaFecha.getDate() + 30)
+  let proximaFecha = new Date()
+  if (!ultimoPago) {
+    proximaFecha = new Date(alumno.fechaRegistro || alumno.createdAt || hoy)
+  } else {
+    proximaFecha = new Date(ultimoPago.fecha)
+    proximaFecha.setDate(proximaFecha.getDate() + 30)
+  }
+  proximaFecha.setHours(0, 0, 0, 0)
   
   const dias = Math.ceil((proximaFecha - hoy) / (1000 * 60 * 60 * 24))
   return dias
@@ -170,6 +174,9 @@ function isTrainerExpanded(trainerId) {
                   <p v-if="getUltimoPago(alumno)" class="payment-info">
                     Último pago: {{ formatDate(getUltimoPago(alumno).fecha) }} 
                     <span class="payment-type">({{ getUltimoPago(alumno).tipo }})</span>
+                    <span v-if="getUltimoPago(alumno).monto" class="payment-amount">
+                      <span class="separator">|</span> ${{ getUltimoPago(alumno).monto }}
+                    </span>
                   </p>
                   <p v-else class="payment-info">Sin pagos registrados</p>
                   
@@ -189,6 +196,7 @@ function isTrainerExpanded(trainerId) {
                       <span class="mini-date">{{ formatDate(pago.fecha) }}</span>
                       <span class="mini-type">{{ pago.tipo }}</span>
                       <span v-if="pago.membresia" class="mini-membresia">{{ pago.membresia.nombre }}</span>
+                      <span v-if="pago.monto" class="mini-monto">${{ pago.monto }}</span>
                     </div>
                   </div>
                 </div>
@@ -205,7 +213,7 @@ function isTrainerExpanded(trainerId) {
                 <span class="days-info" v-if="getPaymentStatus(alumno) !== 'green'">
                   {{ getDaysUntilPayment(alumno) < 0 
                     ? `${Math.abs(getDaysUntilPayment(alumno))} días de retraso`
-                    : `${getDaysUntilPayment(alumno)} días` }}
+                    : getDaysUntilPayment(alumno) === 0 ? '0 días de retraso' : `${getDaysUntilPayment(alumno)} días` }}
                 </span>
               </div>
             </div>
@@ -455,12 +463,29 @@ function isTrainerExpanded(trainerId) {
   color: var(--subtitle-text);
   font-size: 0.85rem;
   margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .payment-type {
   color: var(--header-text);
   text-transform: capitalize;
   font-weight: 500;
+}
+
+.payment-amount {
+  font-weight: 600;
+  color: var(--rheb-primary-green);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.separator {
+  color: var(--input-border);
+  font-weight: 400;
 }
 
 .alumno-phone {
@@ -697,4 +722,5 @@ function isTrainerExpanded(trainerId) {
 .mini-date { font-weight: 600; color: var(--header-text); }
 .mini-type { color: var(--subtitle-text); }
 .mini-membresia { color: var(--rheb-accent-green); margin-left: auto; }
+.mini-monto { font-weight: 600; color: var(--rheb-primary-green); margin-left: 8px; }
 </style>

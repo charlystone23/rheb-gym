@@ -20,7 +20,8 @@ const nuevoAlumno = ref({
   detalleOtros: "",
   membresiaId: "", // ID de la membresía seleccionada
   descuentoActivo: false,
-  montoDescuento: ""
+  montoDescuento: "",
+  promesaDePago: false
 })
 const nuevoPago = ref({
   fechaPago: "",
@@ -112,19 +113,18 @@ function isHistorialVisible(alumnoId) {
 
 function getPaymentStatus(alumno) {
   const ultimoPago = getUltimoPago(alumno)
-  if (!ultimoPago) return "red"
-  
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
   
-  const fechaPagoDate = new Date(ultimoPago.fecha)
-  fechaPagoDate.setHours(0, 0, 0, 0)
+  let proximaFechaPago = new Date()
+  if (!ultimoPago) {
+    proximaFechaPago = new Date(alumno.fechaRegistro || alumno.createdAt || hoy)
+  } else {
+    proximaFechaPago = new Date(ultimoPago.fecha)
+    proximaFechaPago.setDate(proximaFechaPago.getDate() + 30)
+  }
+  proximaFechaPago.setHours(0, 0, 0, 0)
   
-  // Calcular la próxima fecha de pago (30 días después)
-  const proximaFechaPago = new Date(fechaPagoDate)
-  proximaFechaPago.setDate(proximaFechaPago.getDate() + 30)
-  
-  // Calcular días hasta el próximo pago
   const diasHastaPago = Math.ceil((proximaFechaPago - hoy) / (1000 * 60 * 60 * 24))
   
   if (diasHastaPago < 0) {
@@ -159,14 +159,17 @@ function formatNextPaymentDate(alumno) {
 
 function getDaysUntilPayment(alumno) {
   const ultimoPago = getUltimoPago(alumno)
-  if (!ultimoPago) return -999
-  
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
   
-  const fechaPago = new Date(ultimoPago.fecha)
-  const proximaFecha = new Date(fechaPago)
-  proximaFecha.setDate(proximaFecha.getDate() + 30)
+  let proximaFecha = new Date()
+  if (!ultimoPago) {
+    proximaFecha = new Date(alumno.fechaRegistro || alumno.createdAt || hoy)
+  } else {
+    proximaFecha = new Date(ultimoPago.fecha)
+    proximaFecha.setDate(proximaFecha.getDate() + 30)
+  }
+  proximaFecha.setHours(0, 0, 0, 0)
   
   const dias = Math.ceil((proximaFecha - hoy) / (1000 * 60 * 60 * 24))
   return dias
@@ -189,7 +192,8 @@ function openModal() {
     detalleOtros: "",
     membresiaId: membresias.value.find(m => m.nombre.includes('3 días'))?._id || membresias.value[0]?._id || "",
     descuentoActivo: false,
-    montoDescuento: ""
+    montoDescuento: "",
+    promesaDePago: false
   }
 }
 
@@ -220,7 +224,8 @@ function closeModal() {
     detalleOtros: "",
     membresiaId: membresias.value.find(m => m.nombre.includes('3 días'))?._id || membresias.value[0]?._id || "",
     descuentoActivo: false,
-    montoDescuento: ""
+    montoDescuento: "",
+    promesaDePago: false
   }
 }
 
@@ -377,12 +382,9 @@ async function agregarAlumno() {
     }
   }
 
-  const alumnoData = {
-    nombre: nuevoAlumno.value.nombre.trim(),
-    apellido: nuevoAlumno.value.apellido.trim(),
-    celular: nuevoAlumno.value.celular.trim(),
-    entrenador: currentUser.value ? currentUser.value._id : null,
-    historialPagos: [{
+  let historial = []
+  if (!nuevoAlumno.value.promesaDePago) {
+    historial = [{
       fecha: fechaPagoDate,
       tipo: nuevoAlumno.value.tipoPago === 'otros' 
         ? (nuevoAlumno.value.detalleOtros.trim() || 'otros')
@@ -393,6 +395,15 @@ async function agregarAlumno() {
       } : null,
       monto: montoCalculado
     }]
+  }
+
+  const alumnoData = {
+    nombre: nuevoAlumno.value.nombre.trim(),
+    apellido: nuevoAlumno.value.apellido.trim(),
+    celular: nuevoAlumno.value.celular.trim(),
+    fechaRegistro: fechaPagoDate,
+    entrenador: currentUser.value ? currentUser.value._id : null,
+    historialPagos: historial
   }
   
   try {
@@ -735,7 +746,7 @@ async function confirmarDelegacion() {
               <span class="days-info" v-if="getPaymentStatus(alumno) !== 'green'">
                 {{ getDaysUntilPayment(alumno) < 0 
                   ? `${Math.abs(getDaysUntilPayment(alumno))} días de retraso`
-                  : `${getDaysUntilPayment(alumno)} días` }}
+                  : getDaysUntilPayment(alumno) === 0 ? '0 días de retraso' : `${getDaysUntilPayment(alumno)} días` }}
               </span>
             </div>
             <button @click="openPaymentModal(alumno)" class="register-payment-button">
@@ -892,6 +903,17 @@ async function confirmarDelegacion() {
             <label class="checkbox-label">
               <input
                 type="checkbox"
+                v-model="nuevoAlumno.promesaDePago"
+                @change="() => { if(nuevoAlumno.promesaDePago) { nuevoAlumno.detalleOtros = 'Promesa de Pago'; nuevoAlumno.descuentoActivo = false; } }"
+              />
+              Promesa de Pago
+            </label>
+          </div>
+
+          <div class="form-group checkbox-group" v-if="nuevoAlumno.tipoPago === 'otros' && !nuevoAlumno.promesaDePago">
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
                 v-model="nuevoAlumno.descuentoActivo"
                 @change="() => { if(nuevoAlumno.descuentoActivo) nuevoAlumno.detalleOtros = 'Descuento' }"
               />
@@ -899,7 +921,7 @@ async function confirmarDelegacion() {
             </label>
           </div>
 
-          <div class="form-group" v-if="nuevoAlumno.tipoPago === 'otros' && nuevoAlumno.descuentoActivo">
+          <div class="form-group" v-if="nuevoAlumno.tipoPago === 'otros' && nuevoAlumno.descuentoActivo && !nuevoAlumno.promesaDePago">
             <label for="montoDescuentoNuevo">Monto (Final) *</label>
             <input
               id="montoDescuentoNuevo"

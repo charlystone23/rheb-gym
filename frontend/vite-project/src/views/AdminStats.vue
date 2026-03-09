@@ -45,22 +45,22 @@ function getUltimoPago(alumno) {
 
 function getPaymentStatus(alumno) {
   const ultimoPago = getUltimoPago(alumno)
-  if (!ultimoPago) return "red"
-  
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
   
-  const fechaPagoDate = new Date(ultimoPago.fecha)
-  fechaPagoDate.setHours(0, 0, 0, 0)
-  
-  const proximaFechaPago = new Date(fechaPagoDate)
-  proximaFechaPago.setDate(proximaFechaPago.getDate() + 30)
-  
-  if (proximaFechaPago < hoy) return "red"
+  let proximaFechaPago = new Date()
+  if (!ultimoPago) {
+    proximaFechaPago = new Date(alumno.fechaRegistro || alumno.createdAt || hoy)
+  } else {
+    proximaFechaPago = new Date(ultimoPago.fecha)
+    proximaFechaPago.setDate(proximaFechaPago.getDate() + 30)
+  }
+  proximaFechaPago.setHours(0, 0, 0, 0)
   
   const diffTime = proximaFechaPago - hoy
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
   
+  if (diffDays < 0) return "red"
   if (diffDays <= 5) return "yellow"
   return "green"
 }
