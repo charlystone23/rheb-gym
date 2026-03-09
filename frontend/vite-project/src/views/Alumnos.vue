@@ -390,6 +390,7 @@ async function agregarAlumno() {
         ? (nuevoAlumno.value.detalleOtros.trim() || 'otros')
         : nuevoAlumno.value.tipoPago,
       membresia: selectedM ? {
+        id: selectedM._id,
         nombre: selectedM.nombre,
         precio: selectedM.precio
       } : null,
@@ -527,6 +528,7 @@ async function registrarPago() {
     fecha: fechaPagoDate,
     tipo: tipoFinal,
     membresia: selectedM ? {
+      id: selectedM._id,
       nombre: selectedM.nombre,
       precio: selectedM.precio
     } : null,

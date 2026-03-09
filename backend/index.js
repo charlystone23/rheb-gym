@@ -76,6 +76,11 @@ const HorarioSchema = new mongoose.Schema({
         alumno: { type: mongoose.Schema.Types.ObjectId, ref: 'Alumno' },
         dia: { type: String },
         hora: { type: Number }
+    }],
+    cuposExtra: [{
+        dia: { type: String },
+        hora: { type: Number },
+        cantidad: { type: Number, default: 0 }
     }]
 }, { timestamps: true });
 
@@ -83,6 +88,7 @@ const PagoSchema = new mongoose.Schema({
     fecha: { type: Date, required: true },
     tipo: { type: String, required: true }, // 'efectivo', 'transferencia', 'otros'
     membresia: {
+        id: { type: mongoose.Schema.Types.ObjectId, ref: 'Membresia' },
         nombre: { type: String },
         precio: { type: Number }
     },
@@ -422,9 +428,17 @@ async function getTotalAsignacionesAlumno(alumnoId) {
 async function getDiasPermitidos(alumno) {
     if (!alumno.historialPagos || alumno.historialPagos.length === 0) return null;
     const lastPago = alumno.historialPagos[alumno.historialPagos.length - 1];
-    const membNombre = lastPago?.membresia?.nombre;
-    if (!membNombre) return null;
-    const memb = await Membresia.findOne({ nombre: membNombre });
+    if (!lastPago?.membresia) return null;
+
+    let memb = null;
+    // 1. Intentar por ID firme primero
+    if (lastPago.membresia.id) {
+        memb = await Membresia.findById(lastPago.membresia.id);
+    }
+    // 2. Fallback a búsqueda por nombre (Legacy)
+    if (!memb && lastPago.membresia.nombre) {
+        memb = await Membresia.findOne({ nombre: lastPago.membresia.nombre });
+    }
     return memb?.diasPorSemana ?? null;
 }
 
@@ -466,20 +480,27 @@ app.post('/api/horarios/:id/asignaciones', async (req, res) => {
             }
         }
 
-        // Slot capacity check: max 20 students per day+hour across ALL horarios
-        const MAX_POR_TURNO = 20;
-        const todosHorariosConSlot = await Horario.find({
-            asignaciones: { $elemMatch: { dia, hora: Number(hora) } }
-        });
-        let slotTotal = 0;
-        todosHorariosConSlot.forEach(h => {
-            slotTotal += h.asignaciones.filter(a => a.dia === dia && a.hora === Number(hora)).length;
-        });
-        if (slotTotal >= MAX_POR_TURNO) {
+        // --- NUEVO LIMITE BASE ---
+        const LIMITE_BASE = 7;
+        const HARD_MAX_LIMIT = 10;
+
+        let extraSpacesArray = horario.cuposExtra || [];
+        let extraForSlot = extraSpacesArray.find(c => c.dia === dia && c.hora === Number(hora));
+        let cantidadExtra = extraForSlot ? extraForSlot.cantidad : 0;
+
+        // Sum total capacity, capped at max 10
+        let LIMITE_ACTUAL = LIMITE_BASE + cantidadExtra;
+        if (LIMITE_ACTUAL > HARD_MAX_LIMIT) LIMITE_ACTUAL = HARD_MAX_LIMIT;
+
+        // Cuántos alumnos de ESTE bloque (profesor) ya están en este slot
+        const misAlumnosEnTurno = horario.asignaciones.filter(a => a.dia === dia && a.hora === Number(hora)).length;
+
+        if (misAlumnosEnTurno >= LIMITE_ACTUAL) {
             return res.status(400).json({
-                error: `El turno de las ${hora}:00hs ya alcanzó el límite de ${MAX_POR_TURNO} alumnos`
+                error: `Cupo lleno: El maestro ya tiene ${misAlumnosEnTurno} alumnos. El máximo de este turno es ${LIMITE_ACTUAL}.`
             });
         }
+
 
         // Add assignment
         horario.asignaciones.push({ alumno: alumnoId, dia, hora: Number(hora) });
@@ -501,6 +522,26 @@ app.delete('/api/horarios/:id/asignaciones/:asignacionId', async (req, res) => {
         const horario = await Horario.findById(req.params.id);
         if (!horario) return res.status(404).json({ error: 'Horario no encontrado' });
 
+        const asignacionToBeRemoved = horario.asignaciones.find(
+            a => a._id.toString() === req.params.asignacionId
+        );
+
+        if (!asignacionToBeRemoved) {
+            return res.status(404).json({ error: 'Asignación no encontrada' });
+        }
+
+        // Decay the override space limit if it was expanded
+        if (horario.cuposExtra) {
+            const slotExtraIdx = horario.cuposExtra.findIndex(
+                c => c.dia === asignacionToBeRemoved.dia && c.hora === asignacionToBeRemoved.hora
+            );
+            if (slotExtraIdx !== -1 && horario.cuposExtra[slotExtraIdx].cantidad > 0) {
+                // Decay the extra slot counter by 1
+                horario.cuposExtra[slotExtraIdx].cantidad -= 1;
+            }
+        }
+
+        // Remove the student from the array
         horario.asignaciones = horario.asignaciones.filter(
             a => a._id.toString() !== req.params.asignacionId
         );
@@ -516,6 +557,38 @@ app.delete('/api/horarios/:id/asignaciones/:asignacionId', async (req, res) => {
     }
 });
 
+// POST /api/horarios/:id/cupo-extra — add an extra slot manually, caps at base + extra = 10
+app.post('/api/horarios/:id/cupo-extra', async (req, res) => {
+    try {
+        const { dia, hora } = req.body;
+        const horario = await Horario.findById(req.params.id);
+        if (!horario) return res.status(404).json({ error: 'Horario no encontrado' });
+
+        if (!horario.cuposExtra) {
+            horario.cuposExtra = [];
+        }
+
+        const slotExtraIdx = horario.cuposExtra.findIndex(c => c.dia === dia && c.hora === Number(hora));
+        const LIMITE_BASE = 7;
+        const HARD_MAX_LIMIT = 10;
+
+        if (slotExtraIdx !== -1) {
+            const extraActual = horario.cuposExtra[slotExtraIdx].cantidad;
+            if (LIMITE_BASE + extraActual >= HARD_MAX_LIMIT) {
+                return res.status(400).json({ error: `No se puede exceder el límite duro total de ${HARD_MAX_LIMIT} alumnos.` });
+            }
+            horario.cuposExtra[slotExtraIdx].cantidad += 1;
+        } else {
+            horario.cuposExtra.push({ dia, hora: Number(hora), cantidad: 1 });
+        }
+
+        await horario.save();
+        res.json({ message: 'Cupo extra añadido exitosamente', cuposExtra: horario.cuposExtra });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // GET /api/alumnos/:id/asignaciones — get student's weekly slot count + limit
 app.get('/api/alumnos/:id/asignaciones', async (req, res) => {
     try {
@@ -526,6 +599,45 @@ app.get('/api/alumnos/:id/asignaciones', async (req, res) => {
         const diasPermitidos = await getDiasPermitidos(alumno);
 
         res.json({ total, diasPermitidos });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /api/horarios/limits/slots — get limits metadata (using new flat limit schema)
+app.get('/api/horarios/limits/slots', async (req, res) => {
+    try {
+        const horarios = await Horario.find();
+        const slotData = {}; // En este nuevo modelo enviaremos las reglas exactas por bloque
+
+        horarios.forEach(h => {
+            const hId = h._id.toString();
+
+            // Recompilar cuántos lugares extra se concedieron para cada slot en este master block
+            const extrasMap = {};
+            if (h.cuposExtra) {
+                h.cuposExtra.forEach(cx => {
+                    extrasMap[`${cx.dia}-${cx.hora}`] = cx.cantidad;
+                });
+            }
+
+            // Repasar todas las celdas de tiempo del bloque para enviar el límite
+            h.dias.forEach(d => {
+                for (let hr = h.horaInicio; hr < h.horaFin; hr++) {
+                    const key = `${d}-${hr}`;
+                    if (!slotData[key]) slotData[key] = { blocksLimits: {} };
+
+                    // Base = 7, si hay extras sumarlos (hasta max 10)
+                    const extraAdded = extrasMap[key] || 0;
+                    let blockLimit = 7 + extraAdded;
+                    if (blockLimit > 10) blockLimit = 10;
+
+                    slotData[key].blocksLimits[hId] = blockLimit;
+                }
+            });
+        });
+
+        res.json(slotData);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

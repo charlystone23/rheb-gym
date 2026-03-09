@@ -18,6 +18,9 @@ const todosAlumnos = ref([])
 const membresias = ref([])
 const isLoading = ref(false)
 
+const isEntrenador = ref(false)
+const currentUser = ref(null)
+
 // ─── Trainer filter ───
 const selectedTrainer = ref("") // "" = show all
 
@@ -32,17 +35,18 @@ const assignAlumnoId = ref("")
 const assignError = ref("")
 const assignLoading = ref(false)
 const alumnoStatsMap = ref({})
+const globalSlotLimits = ref({})
 
 // ─── Trainer colors palette ───
 const TRAINER_COLORS = [
-  { bg: "#22c55e", border: "#16a34a", text: "#fff" },
-  { bg: "#3b82f6", border: "#1d4ed8", text: "#fff" },
-  { bg: "#f97316", border: "#c2410c", text: "#fff" },
-  { bg: "#a855f7", border: "#7e22ce", text: "#fff" },
-  { bg: "#ec4899", border: "#9d174d", text: "#fff" },
-  { bg: "#14b8a6", border: "#0f766e", text: "#fff" },
-  { bg: "#eab308", border: "#a16207", text: "#1a1a1a" },
-  { bg: "#ef4444", border: "#991b1b", text: "#fff" },
+  { bg: "#a855f7", border: "#7e22ce", text: "#fff" }, // Purple
+  { bg: "#ec4899", border: "#9d174d", text: "#fff" }, // Pink
+  { bg: "#14b8a6", border: "#0f766e", text: "#fff" }, // Teal
+  { bg: "#ef4444", border: "#991b1b", text: "#fff" }, // Red
+  { bg: "#6366f1", border: "#4338ca", text: "#fff" }, // Indigo
+  { bg: "#06b6d4", border: "#0e7490", text: "#fff" }, // Cyan
+  { bg: "#f43f5e", border: "#be123c", text: "#fff" }, // Rose
+  { bg: "#84cc16", border: "#4d7c0f", text: "#fff" }, // Lime
 ]
 
 const trainerColorMap = computed(() => {
@@ -120,7 +124,18 @@ function blockSpan(block) { return block.horaFin - block.horaInicio }
 // ─── Data loading ───
 onMounted(async () => {
   isLoading.value = true
+  const userStr = localStorage.getItem("user")
+  if (userStr) {
+    currentUser.value = JSON.parse(userStr)
+    isEntrenador.value = currentUser.value.role === "entrenador"
+  }
+
   await Promise.all([cargarEntrenadores(), cargarAlumnos(), cargarMembresias()])
+  
+  if (isEntrenador.value && currentUser.value) {
+    selectedTrainer.value = currentUser.value._id || currentUser.value.id
+  }
+
   // After trainers are loaded, ensure master schedules exist for all of them
   await ensureMasterSchedules()
   await cargarHorarios()
@@ -129,6 +144,7 @@ onMounted(async () => {
 
 async function cargarHorarios() {
   horarios.value = await MongoService.getHorarios()
+  globalSlotLimits.value = await MongoService.getSlotLimits()
 }
 
 async function cargarEntrenadores() {
@@ -203,17 +219,82 @@ function asignacionesDeSlot(dia, hora) {
   return selectedBlock.value.asignaciones.filter(a => a.dia === dia && a.hora === hora)
 }
 
-// Global count of students in a day+hour slot across ALL horarios
-const MAX_POR_TURNO = 20
-function slotCount(dia, hora) {
-  let total = 0
-  horarios.value.forEach(h => {
-    total += h.asignaciones.filter(a => a.dia === dia && a.hora === hora).length
+// Global list of student assignments for a daily grid cell
+function getStudentsForCell(dia, hora) {
+  const students = []
+  
+  // We look through all displayed schedules (horariosFiltered)
+  // because if the user filters by a trainer, it'll only show theirs.
+  horariosFiltered.value.forEach(h => {
+    if (!h.asignaciones) return
+    const inSlot = h.asignaciones.filter(a => a.dia === dia && a.hora === hora)
+    inSlot.forEach(a => {
+      if (a.alumno && typeof a.alumno === 'object') {
+        // To avoid duplicates if somehow they overlap (they shouldn't normally)
+        if (!students.find(s => s._id === a.alumno._id)) {
+          students.push(a.alumno)
+        }
+      }
+    })
   })
-  return total
+  
+  return students
 }
+
+// Global summary of trainer occupancy for the "Todos" view
+function getTrainerSummariesForCell(dia, hora) {
+  const summaries = []
+  
+  horariosFiltered.value.forEach(h => {
+    if (!h.asignaciones) return
+    const inSlot = h.asignaciones.filter(a => a.dia === dia && a.hora === hora)
+    if (inSlot.length > 0) {
+      const trainers = h.entrenadores || []
+      const tid = trainers.length > 0 ? (trainers[0]._id || trainers[0]) : null
+      const color = tid && trainerColorMap.value[tid] ? trainerColorMap.value[tid] : { bg: "#4b5563", text: "#fff" }
+      const trainerName = trainers.length > 0 ? trainers[0].nombre : "Sin Entrenador"
+      
+      summaries.push({
+        trainerId: tid,
+        trainerName,
+        colorBg: color.bg,
+        colorText: color.text,
+        studentCount: inSlot.length
+      })
+    }
+  })
+  
+  return summaries
+}
+
+// Global count of students in a day+hour slot across ALL horarios
+function getLimitForTrainer(dia, hora) {
+  if (!selectedBlock.value) return 7
+  const key = `${dia}-${hora}`
+  const stats = globalSlotLimits.value[key]
+  
+  if (!stats || !stats.blocksLimits) return 7
+  
+  const myBlockId = selectedBlock.value._id || selectedBlock.value.id
+  return stats.blocksLimits[myBlockId] || 7
+}
+
+function misAsignacionesCount(dia, hora) {
+  if (!selectedBlock.value?.asignaciones) return 0
+  return selectedBlock.value.asignaciones.filter(a => a.dia === dia && a.hora === hora).length
+}
+
+function slotCount(dia, hora) {
+  // We no longer strictly care about active trainers here.
+  // It will just be used to return the total amount of trainers if we wanted,
+  // but to keep compatibility with the badge count without breaking it:
+  return 0 // Removed unused prospective rendering
+}
+
 function slotIsFull(dia, hora) {
-  return slotCount(dia, hora) >= MAX_POR_TURNO
+  const currentCount = misAsignacionesCount(dia, hora) // My items in the current block
+  const maxLimit = getLimitForTrainer(dia, hora)
+  return currentCount >= maxLimit
 }
 
 function membresiaAlumno(alumno) {
@@ -276,9 +357,13 @@ async function asignarAlumno() {
       dia: activeSlotDia.value,
       hora: activeSlotHora.value
     })
+    
+    // Refresh Limits and the Block
+    globalSlotLimits.value = await MongoService.getSlotLimits()
     const idx = horarios.value.findIndex(h => h._id === selectedBlock.value._id)
     if (idx >= 0) horarios.value[idx] = updated
     selectedBlock.value = updated
+    
     delete alumnoStatsMap.value[assignAlumnoId.value]
     await loadAlumnoStats(assignAlumnoId.value)
     closeAssignModal()
@@ -300,11 +385,31 @@ async function quitarAsignacion(asignacionId) {
     const idx = horarios.value.findIndex(h => String(h._id) === horarioId)
     if (idx >= 0) horarios.value[idx] = updated
     selectedBlock.value = updated
+    
+    // Refresh limits
+    globalSlotLimits.value = await MongoService.getSlotLimits()
+    
     alumnoStatsMap.value = {}
     await preloadStats()
   } catch (e) {
     console.error('Error al quitar asignación:', e)
     alert("Error al quitar asignación: " + (e.message || 'desconocido'))
+  } finally {
+    isLoading.value = false
+  }
+}
+
+async function handleAddExtraSlot() {
+  if (!selectedBlock.value || !activeSlotDia.value || activeSlotHora.value === null) return
+  try {
+    isLoading.value = true
+    const horarioId = String(selectedBlock.value._id)
+    await MongoService.addExtraSlot(horarioId, activeSlotDia.value, activeSlotHora.value)
+    // Refresh limits universally
+    globalSlotLimits.value = await MongoService.getSlotLimits()
+  } catch (e) {
+    console.error('Error adding extra slot:', e)
+    alert(e.message || 'Error al agregar espacio extra')
   } finally {
     isLoading.value = false
   }
@@ -331,7 +436,7 @@ const horaFinOptions = [...horaOptions.slice(1), { value: HORA_FIN, label: forma
     </div>
 
     <!-- Trainer filter bar -->
-    <div class="filter-bar">
+    <div class="filter-bar" v-if="!isEntrenador">
       <span class="filter-label">Ver calendario de:</span>
       <div class="filter-buttons">
         <button
@@ -388,15 +493,34 @@ const horaFinOptions = [...horaOptions.slice(1), { value: HORA_FIN, label: forma
               }"
               @click="openDetailPanel(diaKey, hora)"
             >
-              <div v-if="selectedTrainer" class="slot-content">
-                <div 
-                  v-for="asig in asignacionesDeSlot(diaKey, hora)" 
-                  :key="asig._id"
-                  class="mini-chip"
-                  :style="{ background: getMembresiaColor(asig.alumno).bg }"
-                  :title="`${asig.alumno?.nombre} ${asig.alumno?.apellido}`"
-                ></div>
-                <div v-if="asignacionesDeSlot(diaKey, hora).length === 0" class="slot-empty">Libre</div>
+              <div class="slot-content">
+                <!-- If we are viewing "Todos" (Admin without specific trainer selected) -->
+                <template v-if="!selectedTrainer && !isEntrenador">
+                  <div 
+                    v-for="(summary, idx) in getTrainerSummariesForCell(diaKey, hora)"
+                    :key="idx"
+                    class="main-grid-trainer-chip"
+                    :style="{ background: summary.colorBg, color: summary.colorText }"
+                    :title="`${summary.trainerName}: ${summary.studentCount} alumnos`"
+                  >
+                    <span>{{ summary.trainerName }}: {{ summary.studentCount }}</span>
+                  </div>
+                  <div v-if="getTrainerSummariesForCell(diaKey, hora).length === 0" class="slot-empty">Libre</div>
+                </template>
+                
+                <!-- If a specific trainer is selected or the user IS a trainer -->
+                <template v-else>
+                  <template v-for="alumno in getStudentsForCell(diaKey, hora)" :key="alumno._id || alumno.id">
+                    <div 
+                      class="main-grid-student-chip"
+                      :style="{ background: getMembresiaColor(alumno).bg, borderColor: getMembresiaColor(alumno).border }"
+                      :title="`${alumno.nombre} ${alumno.apellido} - ${membresiaAlumno(alumno) || 'Sin membresía'}`"
+                    >
+                      <span class="chip-text">{{ alumno.nombre }}</span>
+                    </div>
+                  </template>
+                  <div v-if="getStudentsForCell(diaKey, hora).length === 0" class="slot-empty">Libre</div>
+                </template>
               </div>
             </div>
           </template>
@@ -442,13 +566,20 @@ const horaFinOptions = [...horaOptions.slice(1), { value: HORA_FIN, label: forma
                   }"
                   :disabled="slotIsFull(activeSlotDia, activeSlotHora)"
                   @click="openAssignModal()"
-                  :title="slotIsFull(activeSlotDia, activeSlotHora) ? 'Turno lleno (máx. 20 alumnos)' : ''"
+                  :title="slotIsFull(activeSlotDia, activeSlotHora) ? `Cupo del profesor alcanzado (${getLimitForTrainer(activeSlotDia, activeSlotHora)} max).` : ''"
                 >{{
-                  slotIsFull(activeSlotDia, activeSlotHora) ? 'Turno lleno' : '+ Alumno'
+                  slotIsFull(activeSlotDia, activeSlotHora) ? 'Límite alcanzado' : '+ Alumno'
                 }}</button>
                 <span class="slot-cap-badge" :class="{ 'cap-full': slotIsFull(activeSlotDia, activeSlotHora) }">
-                  {{ slotCount(activeSlotDia, activeSlotHora) }}/{{ MAX_POR_TURNO }}
+                  {{ misAsignacionesCount(activeSlotDia, activeSlotHora) }}/{{ getLimitForTrainer(activeSlotDia, activeSlotHora) }}
                 </span>
+                
+                <button 
+                  v-if="slotIsFull(activeSlotDia, activeSlotHora) && getLimitForTrainer(activeSlotDia, activeSlotHora) < 10" 
+                  class="add-extra-space-btn"
+                  @click="handleAddExtraSlot()"
+                  title="Habilitar un cupo extra a este profesor (Max 10)"
+                >+ Espacio</button>
               </div>
             </div>
           </div>
@@ -720,6 +851,39 @@ const horaFinOptions = [...horaOptions.slice(1), { value: HORA_FIN, label: forma
   font-weight: 500;
 }
 
+.main-grid-student-chip {
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 0.70rem;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  border: 1px solid transparent;
+}
+
+.main-grid-trainer-chip {
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 0.70rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  border: 1px solid rgba(0,0,0,0.1);
+}
+
+.chip-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ─── Detail Panel ─── */
 .detail-panel {
   background: var(--card-bg);
@@ -817,6 +981,24 @@ const horaFinOptions = [...horaOptions.slice(1), { value: HORA_FIN, label: forma
 }
 .add-student-btn.no-trainer-sel {
   border-color: #92400e; color: #b45309; border-style: dashed; cursor: not-allowed; opacity: 0.65; font-size: 0.68rem;
+}
+
+.add-extra-space-btn {
+  background: rgba(34, 197, 94, 0.1);
+  border: 1.5px solid var(--rheb-primary-green);
+  color: var(--rheb-primary-green);
+  border-radius: 20px;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.add-extra-space-btn:hover {
+  background: var(--rheb-primary-green);
+  color: #1a1a1a;
+  transform: translateY(-1px);
 }
 
 .slot-cap-badge {

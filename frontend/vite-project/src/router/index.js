@@ -65,7 +65,7 @@ const routes = [
   {
     path: "/admin/schedules",
     component: AdminSchedules,
-    meta: { requiresAuth: true, requiresAdmin: true }
+    meta: { requiresAuth: true } // Quitamos requiresAdmin para que entrenadores puedan entrar
   },
   {
     path: "/:pathMatch(.*)*",
@@ -109,8 +109,8 @@ router.beforeEach((to, from, next) => {
     return
   }
 
-  // If user is common user trying to access admin routes, redirect to dashboard
-  if ((to.path.startsWith("/admin")) && user?.role !== "admin") {
+  // If user is common user trying to access admin routes (except schedules), redirect to dashboard
+  if (to.path.startsWith("/admin") && to.path !== "/admin/schedules" && user?.role !== "admin") {
     next("/dashboard")
     return
   }

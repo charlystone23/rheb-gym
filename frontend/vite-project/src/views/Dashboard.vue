@@ -27,6 +27,10 @@ function goToAlumnos() {
 function goToSales() {
   router.push("/sales")
 }
+
+function goToSchedules() {
+  router.push("/admin/schedules")
+}
 </script>
 
 <template>
@@ -62,6 +66,12 @@ function goToSales() {
           <div class="card-icon">👥</div>
           <h3>Alumnos</h3>
           <p>Gestiona tus alumnos y sus pagos</p>
+        </div>
+
+        <div class="card" @click="goToSchedules">
+          <div class="card-icon">📅</div>
+          <h3>Horarios</h3>
+          <p>Ver mis turnos y cupos disponibles</p>
         </div>
 
         <div class="card" @click="goToSales">

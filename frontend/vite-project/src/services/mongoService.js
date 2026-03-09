@@ -456,5 +456,35 @@ export const MongoService = {
             console.error("API Error:", error);
             return { total: 0, diasPermitidos: null };
         }
+    },
+
+    // Obtenes los limites dinamicos de los slots
+    async getSlotLimits() {
+        try {
+            const response = await fetch(`${API_URL}/horarios/limits/slots`);
+            if (!response.ok) throw new Error('Error al obtener límites');
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            return {};
+        }
+    },
+
+    async addExtraSlot(horarioId, dia, hora) {
+        try {
+            const response = await fetch(`${API_URL}/horarios/${horarioId}/cupo-extra`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ dia, hora })
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || "Error al agregar cupo extra");
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
     }
 };
