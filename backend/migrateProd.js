@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
+require('dotenv').config();
 
-const url = 'mongodb+srv://carlitos007leal_db_user:MZspt59gzUFU04v7@cluster0.ntahlht.mongodb.net/rheb_gym?retryWrites=true&w=majority&appName=Cluster0';
+const url = process.env.MONGO_URI;
 
 async function migrate() {
     try {
