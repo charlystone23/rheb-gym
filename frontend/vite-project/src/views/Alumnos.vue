@@ -309,10 +309,7 @@ async function agregarAlumno() {
     return
   }
 
-  if (!nuevoAlumno.value.celular.trim()) {
-    error.value = "El celular es requerido"
-    return
-  }
+  // Celular no es obligatorio
 
   // Si estamos editando, solo permitimos nombre, apellido, celular
   if (isEditing.value) {
@@ -835,13 +832,12 @@ async function confirmarDelegacion() {
           </div>
 
           <div class="form-group">
-            <label for="celular">Celular *</label>
+            <label for="celular">Celular</label>
             <input
               id="celular"
               v-model="nuevoAlumno.celular"
               type="text"
-              placeholder="Ingresa el celular"
-              required
+              placeholder="Ingresa el celular (opcional)"
             />
           </div>
 

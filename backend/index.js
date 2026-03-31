@@ -98,7 +98,7 @@ const PagoSchema = new mongoose.Schema({
 const AlumnoSchema = new mongoose.Schema({
     nombre: { type: String, required: true },
     apellido: { type: String, required: true },
-    celular: { type: String, required: true },
+    celular: { type: String, required: false },
     fechaRegistro: { type: Date, default: Date.now },
     estado: { type: String, default: 'activo' },
     historialPagos: [PagoSchema],
