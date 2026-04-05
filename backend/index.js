@@ -61,7 +61,9 @@ const UserSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true },
     password: { type: String, required: true }, // En producción: hashear contraseña
     role: { type: String, enum: ['admin', 'entrenador'], default: 'entrenador' },
-    nombre: { type: String }
+    nombre: { type: String },
+    linkedAdmin: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    linkedTrainer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null }
 });
 
 const RutinaSchema = new mongoose.Schema({
@@ -121,6 +123,19 @@ const Rutina = mongoose.model('Rutina', RutinaSchema);
 const Membresia = mongoose.model('Membresia', MembresiaSchema);
 const Horario = mongoose.model('Horario', HorarioSchema);
 
+function sanitizeUser(user) {
+    if (!user) return null;
+
+    return {
+        _id: user._id,
+        username: user.username,
+        role: user.role,
+        nombre: user.nombre,
+        linkedAdminId: user.linkedAdmin?._id || user.linkedAdmin || null,
+        linkedTrainerId: user.linkedTrainer?._id || user.linkedTrainer || null
+    };
+}
+
 // --- API Routes ---
 
 // LOGIN
@@ -128,7 +143,9 @@ app.post('/api/login', async (req, res) => {
     try {
         const { username, password } = req.body;
         // Buscamos usuario por nombre y contraseña (texto plano por ahora)
-        const user = await User.findOne({ username, password });
+        const user = await User.findOne({ username, password })
+            .populate('linkedAdmin', 'username role nombre')
+            .populate('linkedTrainer', 'username role nombre');
 
         if (!user) {
             return res.status(401).json({ success: false, message: 'Credenciales inválidas' });
@@ -137,12 +154,7 @@ app.post('/api/login', async (req, res) => {
         // Retornamos el usuario (sin password idealmente, pero para simpleza lo enviamos todo o filtramos)
         res.json({
             success: true,
-            user: {
-                _id: user._id,
-                username: user.username,
-                role: user.role,
-                nombre: user.nombre
-            }
+            user: sanitizeUser(user)
         });
 
     } catch (err) {
@@ -155,7 +167,45 @@ app.post('/api/users', async (req, res) => {
     try {
         const newUser = new User(req.body);
         const savedUser = await newUser.save();
-        res.status(201).json(savedUser);
+        res.status(201).json(sanitizeUser(savedUser));
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+app.post('/api/users/:id/create-linked-trainer', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { username, password, nombre } = req.body;
+
+        const adminUser = await User.findById(id);
+        if (!adminUser) {
+            return res.status(404).json({ error: 'Administrador no encontrado' });
+        }
+
+        if (adminUser.role !== 'admin') {
+            return res.status(400).json({ error: 'Solo un administrador puede crear su entrenador vinculado' });
+        }
+
+        if (adminUser.linkedTrainer) {
+            return res.status(400).json({ error: 'Este administrador ya tiene un entrenador vinculado' });
+        }
+
+        const linkedTrainer = await User.create({
+            username,
+            password,
+            nombre,
+            role: 'entrenador',
+            linkedAdmin: adminUser._id
+        });
+
+        adminUser.linkedTrainer = linkedTrainer._id;
+        await adminUser.save();
+
+        res.status(201).json({
+            admin: sanitizeUser(adminUser),
+            trainer: sanitizeUser(linkedTrainer)
+        });
     } catch (err) {
         res.status(400).json({ error: err.message });
     }
@@ -165,7 +215,20 @@ app.post('/api/users', async (req, res) => {
 app.get('/api/users', async (req, res) => {
     try {
         const users = await User.find({}, '-password'); // Excluir password
-        res.json(users);
+        res.json(users.map(sanitizeUser));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/users/:id', async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id, '-password');
+        if (!user) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+
+        res.json(sanitizeUser(user));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -176,6 +239,20 @@ app.put('/api/users/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const updateData = { ...req.body };
+        const existingUser = await User.findById(id);
+
+        if (!existingUser) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+        if (
+            updateData.role &&
+            updateData.role !== existingUser.role &&
+            ((existingUser.linkedAdmin && existingUser.role === 'entrenador') ||
+             (existingUser.linkedTrainer && existingUser.role === 'admin'))
+        ) {
+            return res.status(400).json({
+                error: 'No se puede cambiar el rol de un usuario que está vinculado con otro perfil.'
+            });
+        }
 
         // Si no se envía password, no lo actualizamos
         if (!updateData.password) {
@@ -183,9 +260,8 @@ app.put('/api/users/:id', async (req, res) => {
         }
 
         const user = await User.findByIdAndUpdate(id, updateData, { new: true });
-        if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
 
-        res.json(user);
+        res.json(sanitizeUser(user));
     } catch (err) {
         res.status(400).json({ error: err.message });
     }
@@ -213,6 +289,13 @@ app.delete('/api/users/:id', async (req, res) => {
             await Alumno.deleteMany({ entrenador: id });
             // También podríamos limpiar Rutinas si fuera necesario
             await Rutina.deleteMany({ entrenador: id });
+            if (userToDelete.linkedAdmin) {
+                await User.findByIdAndUpdate(userToDelete.linkedAdmin, { $unset: { linkedTrainer: 1 } });
+            }
+        }
+
+        if (userToDelete.role === 'admin' && userToDelete.linkedTrainer) {
+            await User.findByIdAndUpdate(userToDelete.linkedTrainer, { $unset: { linkedAdmin: 1 } });
         }
 
         await User.findByIdAndDelete(id);

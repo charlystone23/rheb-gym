@@ -2,14 +2,25 @@
 import { ref, onMounted } from "vue"
 import { useRouter } from "vue-router"
 import ThemeToggle from "../components/ThemeToggle.vue"
+import { MongoService } from "../services/mongoService"
+import { clearStoredSession, getStoredUser, setAdminContext, setStoredUser } from "../utils/authContext"
 
 const router = useRouter()
 const user = ref(null)
+const showTrainerModal = ref(false)
+const trainerForm = ref({
+  username: "",
+  password: "",
+  nombre: ""
+})
+const trainerError = ref("")
+const isSavingTrainer = ref(false)
 
 onMounted(() => {
-  const userStr = localStorage.getItem("user")
-  if (userStr) {
-    user.value = JSON.parse(userStr)
+  const storedUser = getStoredUser()
+  if (storedUser) {
+    user.value = storedUser
+    setAdminContext(storedUser)
     if (user.value?.role !== "admin") {
       router.push("/dashboard")
     }
@@ -19,8 +30,61 @@ onMounted(() => {
 })
 
 function logout() {
-  localStorage.removeItem("user")
+  clearStoredSession()
   router.push("/")
+}
+
+function openTrainerModal() {
+  trainerError.value = ""
+  trainerForm.value = {
+    username: "",
+    password: "",
+    nombre: user.value?.nombre ? `${user.value.nombre} Entrenador` : ""
+  }
+  showTrainerModal.value = true
+}
+
+function closeTrainerModal() {
+  showTrainerModal.value = false
+  trainerError.value = ""
+}
+
+async function createLinkedTrainer() {
+  if (!trainerForm.value.username.trim() || !trainerForm.value.password.trim() || !trainerForm.value.nombre.trim()) {
+    trainerError.value = "Completá usuario, contraseña y nombre."
+    return
+  }
+
+  try {
+    isSavingTrainer.value = true
+    const result = await MongoService.createLinkedTrainer(user.value._id, {
+      username: trainerForm.value.username.trim(),
+      password: trainerForm.value.password.trim(),
+      nombre: trainerForm.value.nombre.trim()
+    })
+
+    user.value = result.admin
+    setStoredUser(result.admin)
+    setAdminContext(result.admin)
+    closeTrainerModal()
+  } catch (error) {
+    trainerError.value = error.message || "No se pudo crear el entrenador vinculado."
+  } finally {
+    isSavingTrainer.value = false
+  }
+}
+
+async function goToTrainer() {
+  if (!user.value?.linkedTrainerId) return
+
+  try {
+    const trainerUser = await MongoService.getUsuarioById(user.value.linkedTrainerId)
+    setAdminContext(user.value)
+    setStoredUser(trainerUser)
+    router.push("/dashboard")
+  } catch (error) {
+    trainerError.value = "No se pudo abrir el perfil de entrenador."
+  }
 }
 
 function goToEntrenadores() {
@@ -72,6 +136,14 @@ function goToSchedules() {
       <div class="welcome-card">
         <h2>¡Bienvenido, {{ user?.nombre || user?.name || 'Administrador' }}!</h2>
         <p>Gestiona entrenadores y configuraciones del gimnasio.</p>
+        <div class="welcome-actions">
+          <button v-if="user?.linkedTrainerId" @click="goToTrainer" class="switch-role-button">
+            Ir a Entrenador
+          </button>
+          <button v-else @click="openTrainerModal" class="switch-role-button">
+            Crear mi usuario entrenador
+          </button>
+        </div>
       </div>
 
       <div class="cards-grid">
@@ -122,6 +194,41 @@ function goToSchedules() {
           <div class="card-icon">🛒</div>
           <h3>Ventas y Stock</h3>
           <p>Gestionar productos y ventas</p>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showTrainerModal" class="modal-overlay" @click.self="closeTrainerModal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Crear usuario entrenador vinculado</h2>
+          <button @click="closeTrainerModal" class="close-button">×</button>
+        </div>
+
+        <div class="modal-form">
+          <div class="form-group">
+            <label for="trainer-username">Usuario *</label>
+            <input id="trainer-username" v-model="trainerForm.username" type="text" placeholder="usuario.entrenador" />
+          </div>
+
+          <div class="form-group">
+            <label for="trainer-password">Contraseña *</label>
+            <input id="trainer-password" v-model="trainerForm.password" type="password" placeholder="Contraseña" />
+          </div>
+
+          <div class="form-group">
+            <label for="trainer-name">Nombre *</label>
+            <input id="trainer-name" v-model="trainerForm.nombre" type="text" placeholder="Nombre visible del entrenador" />
+          </div>
+
+          <div v-if="trainerError" class="error-message">{{ trainerError }}</div>
+
+          <div class="modal-actions">
+            <button type="button" class="cancel-button" @click="closeTrainerModal">Cancelar</button>
+            <button type="button" class="submit-button" :disabled="isSavingTrainer" @click="createLinkedTrainer">
+              {{ isSavingTrainer ? "Creando..." : "Crear y vincular" }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -228,6 +335,15 @@ function goToSchedules() {
   font-size: 1rem;
 }
 
+.welcome-actions {
+  margin-top: 18px;
+}
+
+.switch-role-button {
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #0f766e 100%);
+  color: white;
+}
+
 .cards-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -266,6 +382,100 @@ function goToSchedules() {
   font-size: 0.9rem;
   margin: 0;
   line-height: 1.4;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1000;
+}
+
+.modal-content {
+  width: min(100%, 460px);
+  background: var(--card-bg);
+  border: 2px solid var(--card-border);
+  border-radius: 18px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+
+.modal-header {
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--input-border);
+}
+
+.modal-header h2 {
+  margin: 0;
+  color: var(--header-text);
+  font-size: 1.1rem;
+}
+
+.close-button {
+  background: transparent;
+  color: var(--header-text);
+  box-shadow: none;
+  font-size: 1.4rem;
+  padding: 0;
+  min-height: 0;
+}
+
+.modal-form {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form-group label {
+  color: var(--header-text);
+  font-weight: 700;
+}
+
+.form-group input {
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 2px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--header-text);
+}
+
+.error-message {
+  background: #fee2e2;
+  color: #b91c1c;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 0.92rem;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.cancel-button {
+  background: transparent;
+  color: var(--header-text);
+  border: 2px solid var(--input-border);
+}
+
+.submit-button {
+  background: var(--primary-btn-bg);
+  color: var(--primary-btn-text);
 }
 
 .card.disabled {

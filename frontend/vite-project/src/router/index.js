@@ -10,6 +10,7 @@ import AdminMemberships from "../views/AdminMemberships.vue"
 import AdminConfig from "../views/AdminConfig.vue"
 import AdminSales from "../views/AdminSales.vue"
 import AdminSchedules from "../views/AdminSchedules.vue"
+import { getStoredUser } from "../utils/authContext"
 
 const routes = [
   {
@@ -82,10 +83,7 @@ router.beforeEach((to, from, next) => {
   // Get user from localStorage safely
   let user = null
   try {
-    const userStr = localStorage.getItem("user")
-    if (userStr) {
-      user = JSON.parse(userStr)
-    }
+    user = getStoredUser()
   } catch (e) {
     console.error("Error parsing user from localStorage:", e)
     localStorage.removeItem("user")

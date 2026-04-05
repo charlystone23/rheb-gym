@@ -52,6 +52,35 @@ export const MongoService = {
         }
     },
 
+    async getUsuarioById(userId) {
+        try {
+            const response = await fetch(`${API_URL}/users/${userId}`);
+            if (!response.ok) throw new Error('Error al obtener usuario');
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
+    async createLinkedTrainer(adminId, trainerData) {
+        try {
+            const response = await fetch(`${API_URL}/users/${adminId}/create-linked-trainer`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(trainerData)
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Error al crear el entrenador vinculado');
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
     async updateUsuario(userId, updateData) {
         try {
             const response = await fetch(`${API_URL}/users/${userId}`, {

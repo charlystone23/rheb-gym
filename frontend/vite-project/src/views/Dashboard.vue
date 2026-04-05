@@ -2,21 +2,24 @@
 import { ref, onMounted } from "vue"
 import { useRouter } from "vue-router"
 import ThemeToggle from "../components/ThemeToggle.vue"
+import { MongoService } from "../services/mongoService"
+import { clearStoredSession, getAdminContext, getStoredUser, setStoredUser } from "../utils/authContext"
 
 const router = useRouter()
 const user = ref(null)
+const switchError = ref("")
 
 onMounted(() => {
-  const userStr = localStorage.getItem("user")
-  if (userStr) {
-    user.value = JSON.parse(userStr)
+  const storedUser = getStoredUser()
+  if (storedUser) {
+    user.value = storedUser
   } else {
     router.push("/")
   }
 })
 
 function logout() {
-  localStorage.removeItem("user")
+  clearStoredSession()
   router.push("/")
 }
 
@@ -31,6 +34,29 @@ function goToSales() {
 function goToSchedules() {
   router.push("/admin/schedules")
 }
+
+async function goToAdmin() {
+  try {
+    switchError.value = ""
+    const adminFromContext = getAdminContext()
+
+    if (adminFromContext) {
+      setStoredUser(adminFromContext)
+      router.push("/admin")
+      return
+    }
+
+    if (!user.value?.linkedAdminId) {
+      return
+    }
+
+    const adminUser = await MongoService.getUsuarioById(user.value.linkedAdminId)
+    setStoredUser(adminUser)
+    router.push("/admin")
+  } catch (error) {
+    switchError.value = "No se pudo volver al panel administrador."
+  }
+}
 </script>
 
 <template>
@@ -44,6 +70,7 @@ function goToSchedules() {
         </div>
       </div>
       <div class="header-actions">
+        <button v-if="user?.linkedAdminId" @click="goToAdmin" class="switch-role-button">Ir a Administrador</button>
         <ThemeToggle />
         <button @click="logout" class="logout-button">Cerrar Sesión</button>
       </div>
@@ -53,6 +80,7 @@ function goToSchedules() {
       <div class="welcome-card">
         <h2>¡Bienvenido, {{ user?.nombre || user?.name || 'a Rheb' }}!</h2>
         <p>Gestiona tus entrenamientos y rutinas desde aquí.</p>
+        <p v-if="switchError" class="switch-error">{{ switchError }}</p>
       </div>
 
       <div class="cards-grid">
@@ -148,6 +176,11 @@ function goToSchedules() {
   min-height: 44px;
 }
 
+.switch-role-button {
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #0f766e 100%);
+  color: white;
+}
+
 .logout-button:active {
   transform: scale(0.98);
   background-color: #3A3A3A;
@@ -177,6 +210,12 @@ function goToSchedules() {
   color: var(--subtitle-text);
   margin: 0;
   font-size: 1rem;
+}
+
+.switch-error {
+  margin-top: 12px;
+  color: #b91c1c;
+  font-weight: 600;
 }
 
 .cards-grid {

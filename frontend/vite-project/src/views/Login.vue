@@ -2,6 +2,7 @@
 import { ref } from "vue"
 import { useRouter } from "vue-router"
 import { MongoService } from "../services/mongoService"
+import { clearStoredSession, setAdminContext, setStoredUser } from "../utils/authContext"
 
 const router = useRouter()
 
@@ -23,7 +24,11 @@ async function handleLogin() {
     const response = await MongoService.login(username.value, password.value)
     
     if (response.success) {
-      localStorage.setItem("user", JSON.stringify(response.user))
+      clearStoredSession()
+      setStoredUser(response.user)
+      if (response.user.role === "admin") {
+        setAdminContext(response.user)
+      }
       // Redirect based on role
       if (response.user.role === 'admin') {
         router.push("/admin")
