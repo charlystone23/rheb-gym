@@ -4,11 +4,13 @@ import { useRouter } from "vue-router"
 import DateField from "../components/DateField.vue"
 import { MongoService } from "../services/mongoService"
 import { formatDateInput, getMonthRangeDisplay, parseDisplayDate } from "../utils/date"
+import { getStoredUser } from "../utils/authContext"
 
 const router = useRouter()
 const entrenadores = ref([])
 const isLoading = ref(false)
 const error = ref("")
+const currentUser = ref(null)
 
 // Filtros Globales
 const hoy = new Date()
@@ -44,6 +46,7 @@ function syncTrainerFiltersWithGlobalRange() {
 onMounted(async () => {
   try {
     isLoading.value = true
+    currentUser.value = getStoredUser()
     const data = await MongoService.getEntrenadores()
     entrenadores.value = data || []
     syncTrainerFiltersWithGlobalRange()
@@ -53,6 +56,20 @@ onMounted(async () => {
   } finally {
     isLoading.value = false
   }
+})
+
+const entrenadoresVisibles = computed(() => {
+  if (!currentUser.value?.linkedTrainerId) {
+    return entrenadores.value
+  }
+
+  return entrenadores.value.filter((entrenador) => {
+    if (entrenador._id !== currentUser.value.linkedTrainerId) {
+      return true
+    }
+
+    return entrenador.includeInAdminStats !== false
+  })
 })
 
 function getUltimoPago(alumno) {
@@ -83,7 +100,7 @@ function getPaymentStatus(alumno) {
 }
 
 const statsPorEntrenador = computed(() => {
-  return entrenadores.value.map(entrenador => {
+  return entrenadoresVisibles.value.map(entrenador => {
     const totalAlumnos = entrenador.alumnos.length
     const alDia = entrenador.alumnos.filter(a => getPaymentStatus(a) === 'green').length
     const proximoVencer = entrenador.alumnos.filter(a => getPaymentStatus(a) === 'yellow').length
@@ -143,7 +160,7 @@ const statsGenerales = computed(() => {
   
   // Calcular recaudación del mes seleccionado (pagos cuya fecha cae en ese mes)
   let recaudacionMes = 0
-  entrenadores.value.forEach(entrenador => {
+  entrenadoresVisibles.value.forEach(entrenador => {
     entrenador.alumnos.forEach(alumno => {
       alumno.historialPagos.forEach(pago => {
         const fechaPago = new Date(pago.fecha)

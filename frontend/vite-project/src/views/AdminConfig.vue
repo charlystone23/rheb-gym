@@ -1,13 +1,22 @@
 <script setup>
 import { ref, onMounted } from "vue"
 import { useRouter } from "vue-router"
+import { MongoService } from "../services/mongoService"
+import { getStoredUser } from "../utils/authContext"
 
 const router = useRouter()
 const isDarkMode = ref(false)
+const currentUser = ref(null)
+const linkedTrainer = ref(null)
+const includeInStats = ref(true)
+const isSavingStatsConfig = ref(false)
+const configMessage = ref("")
+const configError = ref("")
 
 onMounted(() => {
   const savedTheme = localStorage.getItem('theme') || 'light'
   isDarkMode.value = savedTheme === 'dark'
+  loadLinkedTrainerConfig()
 })
 
 function toggleTheme() {
@@ -18,6 +27,46 @@ function toggleTheme() {
 
 function goBack() {
   router.push("/admin")
+}
+
+async function loadLinkedTrainerConfig() {
+  try {
+    currentUser.value = getStoredUser()
+    configError.value = ""
+
+    if (!currentUser.value?.linkedTrainerId) {
+      linkedTrainer.value = null
+      return
+    }
+
+    linkedTrainer.value = await MongoService.getUsuarioById(currentUser.value.linkedTrainerId)
+    includeInStats.value = linkedTrainer.value.includeInAdminStats !== false
+  } catch (error) {
+    configError.value = "No se pudo cargar la configuración de estadísticas."
+  }
+}
+
+async function toggleLinkedTrainerStats() {
+  if (!linkedTrainer.value?._id) return
+
+  try {
+    isSavingStatsConfig.value = true
+    configMessage.value = ""
+    configError.value = ""
+
+    linkedTrainer.value = await MongoService.updateUsuario(linkedTrainer.value._id, {
+      includeInAdminStats: includeInStats.value
+    })
+
+    configMessage.value = includeInStats.value
+      ? "Tu entrenador vinculado vuelve a contar en las estadísticas."
+      : "Tu entrenador vinculado ya no cuenta en las estadísticas totales."
+  } catch (error) {
+    includeInStats.value = !includeInStats.value
+    configError.value = error.message || "No se pudo guardar la configuración."
+  } finally {
+    isSavingStatsConfig.value = false
+  }
 }
 </script>
 
@@ -47,6 +96,35 @@ function goBack() {
             <span class="slider round"></span>
           </label>
         </div>
+      </div>
+
+      <div class="config-section">
+        <h3>Estadísticas</h3>
+        <div v-if="linkedTrainer" class="config-item">
+          <div class="item-info">
+            <span class="item-title">Contar mi entrenador vinculado en estadísticas</span>
+            <span class="item-desc">
+              {{ linkedTrainer.nombre }} {{ includeInStats ? "sí" : "no" }} se suma a los totales del panel de estadísticas.
+            </span>
+          </div>
+          <label class="switch">
+            <input
+              type="checkbox"
+              v-model="includeInStats"
+              :disabled="isSavingStatsConfig"
+              @change="toggleLinkedTrainerStats"
+            >
+            <span class="slider round"></span>
+          </label>
+        </div>
+        <div v-else class="config-item disabled">
+          <div class="item-info">
+            <span class="item-title">Entrenador vinculado</span>
+            <span class="item-desc">Primero necesitás crear tu usuario entrenador desde el panel administrador.</span>
+          </div>
+        </div>
+        <p v-if="configMessage" class="config-message success">{{ configMessage }}</p>
+        <p v-if="configError" class="config-message error">{{ configError }}</p>
       </div>
 
       <div class="config-section">
@@ -210,5 +288,19 @@ input:checked + .slider:before {
 
 .disabled {
   opacity: 0.6;
+}
+
+.config-message {
+  margin: 14px 0 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.config-message.success {
+  color: #15803d;
+}
+
+.config-message.error {
+  color: #b91c1c;
 }
 </style>

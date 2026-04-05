@@ -63,7 +63,8 @@ const UserSchema = new mongoose.Schema({
     role: { type: String, enum: ['admin', 'entrenador'], default: 'entrenador' },
     nombre: { type: String },
     linkedAdmin: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-    linkedTrainer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null }
+    linkedTrainer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    includeInAdminStats: { type: Boolean, default: true }
 });
 
 const RutinaSchema = new mongoose.Schema({
@@ -132,7 +133,8 @@ function sanitizeUser(user) {
         role: user.role,
         nombre: user.nombre,
         linkedAdminId: user.linkedAdmin?._id || user.linkedAdmin || null,
-        linkedTrainerId: user.linkedTrainer?._id || user.linkedTrainer || null
+        linkedTrainerId: user.linkedTrainer?._id || user.linkedTrainer || null,
+        includeInAdminStats: user.includeInAdminStats ?? true
     };
 }
 
