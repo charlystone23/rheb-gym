@@ -1,7 +1,8 @@
 <script setup>
-import { ref, onMounted, computed } from "vue"
+import { ref, onMounted, computed, watch } from "vue"
 import { useRouter } from "vue-router"
 import { MongoService } from "../services/mongoService"
+import { formatDateInput, getMonthRangeDisplay, parseDisplayDate } from "../utils/date"
 
 const router = useRouter()
 const entrenadores = ref([])
@@ -20,16 +21,31 @@ const meses = [
   { val: 9, label: "Octubre" }, { val: 10, label: "Noviembre" }, { val: 11, label: "Diciembre" }
 ]
 
-// Rango de fechas por entrenador (inicializar con mes actual)
-const firstDay = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().split('T')[0]
-const lastDay = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).toISOString().split('T')[0]
 const trainerFilters = ref({}) // { trainerId: { start, end } }
+
+const globalDateRange = computed(() => {
+  return getMonthRangeDisplay(selectedYear.value, selectedMonth.value)
+})
+
+function syncTrainerFiltersWithGlobalRange() {
+  const nextFilters = {}
+
+  entrenadores.value.forEach((entrenador) => {
+    nextFilters[entrenador._id] = {
+      start: globalDateRange.value.start,
+      end: globalDateRange.value.end
+    }
+  })
+
+  trainerFilters.value = nextFilters
+}
 
 onMounted(async () => {
   try {
     isLoading.value = true
     const data = await MongoService.getEntrenadores()
     entrenadores.value = data || []
+    syncTrainerFiltersWithGlobalRange()
   } catch (e) {
     console.error("Error loading stats:", e)
     error.value = "Error al cargar estadísticas"
@@ -73,10 +89,23 @@ const statsPorEntrenador = computed(() => {
     const deuda = entrenador.alumnos.filter(a => getPaymentStatus(a) === 'red').length
     
     // Obtener filtros del entrenador o usar default
-    const filter = trainerFilters.value[entrenador._id] || { start: firstDay, end: lastDay }
-    const startDate = new Date(filter.start)
+    const filter = trainerFilters.value[entrenador._id] || globalDateRange.value
+    const startDate = parseDisplayDate(filter.start)
+    const endDate = parseDisplayDate(filter.end)
+    if (!startDate || !endDate) {
+      return {
+        id: entrenador._id,
+        nombre: `${entrenador.nombre} ${entrenador.apellido || ''}`,
+        total: totalAlumnos,
+        alDia,
+        proximoVencer,
+        deuda,
+        saldoHistorico: 0,
+        porcentajeActivos: totalAlumnos > 0 ? Math.round(((alDia + proximoVencer) / totalAlumnos) * 100) : 0
+      }
+    }
+
     startDate.setHours(0, 0, 0, 0)
-    const endDate = new Date(filter.end)
     endDate.setHours(23, 59, 59, 999)
 
     // Calcular saldo histórico en el rango seleccionado
@@ -136,10 +165,17 @@ const statsGenerales = computed(() => {
 
 function updateTrainerFilter(trainerId, field, value) {
   if (!trainerFilters.value[trainerId]) {
-    trainerFilters.value[trainerId] = { start: firstDay, end: lastDay }
+    trainerFilters.value[trainerId] = {
+      start: globalDateRange.value.start,
+      end: globalDateRange.value.end
+    }
   }
-  trainerFilters.value[trainerId][field] = value
+  trainerFilters.value[trainerId][field] = formatDateInput(value)
 }
+
+watch([selectedMonth, selectedYear], () => {
+  syncTrainerFiltersWithGlobalRange()
+})
 
 function goBack() {
   router.push("/admin")
@@ -211,16 +247,20 @@ function goBack() {
             <div class="date-input-group">
               <label>Desde:</label>
               <input 
-                type="date" 
-                :value="trainerFilters[stat.id]?.start || firstDay" 
+                type="text" 
+                :value="trainerFilters[stat.id]?.start || globalDateRange.start" 
+                placeholder="dd/mm/aaaa"
+                maxlength="10"
                 @input="e => updateTrainerFilter(stat.id, 'start', e.target.value)"
               >
             </div>
             <div class="date-input-group">
               <label>Hasta:</label>
               <input 
-                type="date" 
-                :value="trainerFilters[stat.id]?.end || lastDay" 
+                type="text" 
+                :value="trainerFilters[stat.id]?.end || globalDateRange.end" 
+                placeholder="dd/mm/aaaa"
+                maxlength="10"
                 @input="e => updateTrainerFilter(stat.id, 'end', e.target.value)"
               >
             </div>
@@ -433,7 +473,7 @@ function goBack() {
 .trainer-date-filter {
   margin: 16px 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  grid-template-columns: 1fr;
   gap: 12px;
   background: var(--input-bg);
   padding: 16px;
@@ -470,17 +510,34 @@ function goBack() {
   width: 100%;
   box-sizing: border-box;
   max-width: 100%;
+  min-height: 52px;
+  color-scheme: light;
 }
 
 .date-input-group input:focus {
   outline: none;
   border-color: var(--rheb-primary-green);
   box-shadow: 0 0 0 4px rgba(255, 215, 0, 0.1);
-  background: white;
+  background: var(--card-bg);
 }
 
 .date-input-group input:hover {
   border-color: #cbd5e1;
+}
+
+.date-input-group input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.95;
+  filter: var(--calendar-icon-filter);
+}
+
+.date-input-group input::-webkit-datetime-edit,
+.date-input-group input::-webkit-datetime-edit-fields-wrapper,
+.date-input-group input::-webkit-datetime-edit-text,
+.date-input-group input::-webkit-datetime-edit-month-field,
+.date-input-group input::-webkit-datetime-edit-day-field,
+.date-input-group input::-webkit-datetime-edit-year-field {
+  color: var(--header-text);
 }
 
 .saldo-display {
@@ -525,7 +582,7 @@ function goBack() {
 
 .progress-bar-container {
   height: 12px;
-  background: #eee;
+  background: var(--muted-track);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -547,5 +604,12 @@ function goBack() {
   text-align: center;
   padding: 40px;
   font-size: 1.2rem;
+}
+
+@media (min-width: 900px) {
+  .trainer-date-filter {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+  }
 }
 </style>

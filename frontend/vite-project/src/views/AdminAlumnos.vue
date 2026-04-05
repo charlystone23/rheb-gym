@@ -2,6 +2,7 @@
 import { ref, onMounted } from "vue"
 import { useRouter } from "vue-router"
 import { MongoService } from "../services/mongoService"
+import { formatDateAR } from "../utils/date"
 
 const router = useRouter()
 const entrenadores = ref([])
@@ -77,11 +78,7 @@ function getPaymentStatus(alumno) {
 }
 
 function formatDate(date) {
-  const fecha = new Date(date)
-  const dia = String(fecha.getDate()).padStart(2, '0')
-  const mes = String(fecha.getMonth() + 1).padStart(2, '0')
-  const año = fecha.getFullYear()
-  return `${dia}/${mes}/${año}`
+  return formatDateAR(date)
 }
 
 function getDaysUntilPayment(alumno) {

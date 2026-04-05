@@ -2,6 +2,13 @@
 import { ref, onMounted, computed } from "vue"
 import { useRouter } from "vue-router"
 import { MongoService } from "../services/mongoService"
+import {
+  displayToNativeDate,
+  formatDateAR,
+  formatDateInput,
+  nativeDateToDisplay,
+  parseDisplayDate
+} from "../utils/date"
 
 const router = useRouter()
 const alumnos = ref([])
@@ -137,11 +144,7 @@ function getPaymentStatus(alumno) {
 }
 
 function formatDate(date) {
-  const fecha = new Date(date)
-  const dia = String(fecha.getDate()).padStart(2, '0')
-  const mes = String(fecha.getMonth() + 1).padStart(2, '0')
-  const año = fecha.getFullYear()
-  return `${dia}/${mes}/${año}`
+  return formatDateAR(date)
 }
 
 function formatNextPaymentDate(alumno) {
@@ -230,38 +233,7 @@ function closeModal() {
 }
 
 function parseDateString(dateString) {
-  // Convierte dd/mm/yyyy a Date
-  const parts = dateString.split('/')
-  if (parts.length !== 3) return null
-  
-  const dia = parseInt(parts[0], 10)
-  const mes = parseInt(parts[1], 10) - 1 // Los meses en JS son 0-indexed
-  const año = parseInt(parts[2], 10)
-  
-  if (isNaN(dia) || isNaN(mes) || isNaN(año)) return null
-  
-  const fecha = new Date(año, mes, dia)
-  
-  // Validar que la fecha sea válida
-  if (fecha.getDate() !== dia || fecha.getMonth() !== mes || fecha.getFullYear() !== año) {
-    return null
-  }
-  
-  return fecha
-}
-
-function formatDateInput(value) {
-  // Remover todo lo que no sea número
-  let numbers = value.replace(/\D/g, '')
-  
-  // Aplicar formato dd/mm/yyyy
-  if (numbers.length <= 2) {
-    return numbers
-  } else if (numbers.length <= 4) {
-    return numbers.slice(0, 2) + '/' + numbers.slice(2)
-  } else {
-    return numbers.slice(0, 2) + '/' + numbers.slice(2, 4) + '/' + numbers.slice(4, 8)
-  }
+  return parseDisplayDate(dateString)
 }
 
 function handleDateInput(event) {
@@ -279,17 +251,6 @@ function handleDateInput(event) {
   }
 }
 
-// Convert yyyy-mm-dd (native <input type="date">) ↔ dd/mm/yyyy
-function nativeDateToDisplay(value) {
-  if (!value) return ""
-  const [y, m, d] = value.split("-")
-  return `${d}/${m}/${y}`
-}
-function displayToNativeDate(value) {
-  if (!value || !/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return ""
-  const [d, m, y] = value.split("/")
-  return `${y}-${m}-${d}`
-}
 function handleNativeDateNuevo(e) {
   nuevoAlumno.value.fechaPago = nativeDateToDisplay(e.target.value)
 }

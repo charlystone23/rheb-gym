@@ -22,11 +22,14 @@
   --input-border: #E0E0E0;
   --header-text: var(--rheb-deep-green);
   --subtitle-text: var(--rheb-primary-green);
+  --surface-strong: #16342f;
+  --muted-track: #d9e7e3;
+  --calendar-icon-filter: invert(18%) sepia(23%) saturate(992%) hue-rotate(125deg) brightness(94%) contrast(95%);
   
   --primary-btn-bg: var(--rheb-deep-green);
   --primary-btn-text: var(--rheb-white);
 
-  color-scheme: light dark;
+  color-scheme: light;
   color: var(--text-color);
   background-color: var(--bg-color);
 
@@ -47,6 +50,9 @@
   --input-border: #00695c;
   --header-text: #FFFFFF;
   --subtitle-text: #80cbc4;
+  --surface-strong: #001b17;
+  --muted-track: #0f4a42;
+  --calendar-icon-filter: invert(97%) sepia(11%) saturate(442%) hue-rotate(117deg) brightness(104%) contrast(91%);
   
   --primary-btn-bg: #80cbc4;
   --primary-btn-text: #00251a;
@@ -135,6 +141,14 @@ select {
   color: var(--text-color);
   border: 2px solid var(--input-border);
   border-radius: 8px;
+}
+
+input[type="date"] {
+  color-scheme: light;
+}
+
+[data-theme="dark"] input[type="date"] {
+  color-scheme: dark;
 }
 
 input:focus,

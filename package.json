@@ -1,0 +1,9 @@
+{
+  "name": "rheb-gym",
+  "private": true,
+  "scripts": {
+    "dev": "bash -lc 'trap \"kill 0\" EXIT; npm run dev:backend & npm run dev:frontend & wait'",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend/vite-project run dev -- --host 0.0.0.0"
+  }
+}

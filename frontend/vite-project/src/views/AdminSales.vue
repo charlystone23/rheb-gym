@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from "vue"
 import { useRouter } from "vue-router"
 import { MongoService } from "../services/mongoService"
+import { displayToNativeDate, formatDateInput, formatDateTimeAR, getMonthRangeDisplay, parseDisplayDate } from "../utils/date"
 
 const router = useRouter()
 const products = ref([])
@@ -198,10 +199,8 @@ async function updatePriceOnly() {
 const showGeneralStatsModal = ref(false)
 const generalStats = ref(null)
 const expandedSellers = ref([]) // Array of seller names
-const statsDateRange = ref({
-  start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
-  end: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0]
-})
+const today = new Date()
+const statsDateRange = ref(getMonthRangeDisplay(today.getFullYear(), today.getMonth()))
 const isLoadingStats = ref(false)
 
 function openGeneralStatsModal() {
@@ -219,10 +218,18 @@ function toggleSeller(name) {
 
 async function loadGeneralStats() {
   try {
+    const startDate = parseDisplayDate(statsDateRange.value.start)
+    const endDate = parseDisplayDate(statsDateRange.value.end)
+
+    if (!startDate || !endDate) {
+      alert("Ingresá un rango válido en formato dd/mm/aaaa")
+      return
+    }
+
     isLoadingStats.value = true
     generalStats.value = await MongoService.getGeneralSalesStats(
-      statsDateRange.value.start,
-      statsDateRange.value.end
+      displayToNativeDate(statsDateRange.value.start),
+      displayToNativeDate(statsDateRange.value.end)
     )
   } catch (e) {
     console.error("Error loading general stats:", e)
@@ -257,7 +264,11 @@ async function openHistoryModal(product) {
 }
 
 function formatDate(date) {
-  return new Date(date).toLocaleString()
+  return formatDateTimeAR(date)
+}
+
+function updateStatsDateRange(field, value) {
+  statsDateRange.value[field] = formatDateInput(value)
 }
 
 // --- Sales Management ---
@@ -612,11 +623,23 @@ function formatPrice(value) {
         <div class="stats-filter-row">
             <div class="form-group">
                 <label>Desde:</label>
-                <input type="date" v-model="statsDateRange.start">
+                <input
+                  type="text"
+                  :value="statsDateRange.start"
+                  placeholder="dd/mm/aaaa"
+                  maxlength="10"
+                  @input="e => updateStatsDateRange('start', e.target.value)"
+                >
             </div>
             <div class="form-group">
                 <label>Hasta:</label>
-                <input type="date" v-model="statsDateRange.end">
+                <input
+                  type="text"
+                  :value="statsDateRange.end"
+                  placeholder="dd/mm/aaaa"
+                  maxlength="10"
+                  @input="e => updateStatsDateRange('end', e.target.value)"
+                >
             </div>
             <button @click="loadGeneralStats" class="submit-button" style="margin-top: auto; padding: 10px;">Filtrar</button>
         </div>

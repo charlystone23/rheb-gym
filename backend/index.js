@@ -1,7 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const Product = require('./models/Product');
 
 const Sale = require('./models/Sale');
@@ -20,17 +20,27 @@ app.use(express.json());
 
 // MongoDB Connection
 const clientOptions = { serverApi: { version: '1', strict: true, deprecationErrors: true } };
+let mongoConnectionErrorLogged = false;
+
+function logMongoConnectionError(err) {
+    if (mongoConnectionErrorLogged) return;
+    mongoConnectionErrorLogged = true;
+
+    const code = err?.code ? ` (${err.code})` : '';
+    const host = err?.hostname ? ` Host: ${err.hostname}.` : '';
+    console.warn(`MongoDB no disponible${code}. El backend sigue levantado, pero las rutas que usan base de datos no van a responder correctamente.${host}`);
+}
 
 mongoose.connect(process.env.MONGO_URI, clientOptions)
     .then(() => console.log('MongoDB connected successfully'))
-    .catch(err => console.error('MongoDB connection error:', err));
+    .catch(logMongoConnectionError);
 
 mongoose.connection.on('connected', () => {
     console.log('Mongoose connected to DB Cluster');
 });
 
 mongoose.connection.on('error', (err) => {
-    console.error('Mongoose connection error:', err);
+    logMongoConnectionError(err);
 });
 
 mongoose.connection.on('disconnected', () => {
