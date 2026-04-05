@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from "vue"
 import { useRouter } from "vue-router"
+import DateField from "../components/DateField.vue"
 import { MongoService } from "../services/mongoService"
 import { displayToNativeDate, formatDateInput, formatDateTimeAR, getMonthRangeDisplay, parseDisplayDate } from "../utils/date"
 
@@ -623,23 +624,19 @@ function formatPrice(value) {
         <div class="stats-filter-row">
             <div class="form-group">
                 <label>Desde:</label>
-                <input
-                  type="text"
-                  :value="statsDateRange.start"
-                  placeholder="dd/mm/aaaa"
-                  maxlength="10"
-                  @input="e => updateStatsDateRange('start', e.target.value)"
-                >
+                <DateField
+                  :model-value="statsDateRange.start"
+                  input-id="sales-stats-start"
+                  @update:model-value="value => updateStatsDateRange('start', value)"
+                />
             </div>
             <div class="form-group">
                 <label>Hasta:</label>
-                <input
-                  type="text"
-                  :value="statsDateRange.end"
-                  placeholder="dd/mm/aaaa"
-                  maxlength="10"
-                  @input="e => updateStatsDateRange('end', e.target.value)"
-                >
+                <DateField
+                  :model-value="statsDateRange.end"
+                  input-id="sales-stats-end"
+                  @update:model-value="value => updateStatsDateRange('end', value)"
+                />
             </div>
             <button @click="loadGeneralStats" class="submit-button" style="margin-top: auto; padding: 10px;">Filtrar</button>
         </div>

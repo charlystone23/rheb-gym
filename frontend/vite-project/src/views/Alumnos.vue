@@ -1,12 +1,10 @@
 <script setup>
 import { ref, onMounted, computed } from "vue"
 import { useRouter } from "vue-router"
+import DateField from "../components/DateField.vue"
 import { MongoService } from "../services/mongoService"
 import {
-  displayToNativeDate,
   formatDateAR,
-  formatDateInput,
-  nativeDateToDisplay,
   parseDisplayDate
 } from "../utils/date"
 
@@ -49,10 +47,6 @@ const isLoadingTrainers = ref(false)
 const isLoading = ref(false)
 
 const currentUser = ref(null)
-
-// Date picker toggle: true = native date picker, false = manual text
-const useDatePickerNuevo = ref(true)
-const useDatePickerPago = ref(true)
 
 onMounted(async () => {
   try {
@@ -234,28 +228,6 @@ function closeModal() {
 
 function parseDateString(dateString) {
   return parseDisplayDate(dateString)
-}
-
-function handleDateInput(event) {
-  const input = event.target
-  const formatted = formatDateInput(input.value)
-  
-  // Limitar a 10 caracteres (dd/mm/yyyy)
-  const finalValue = formatted.length > 10 ? formatted.slice(0, 10) : formatted
-  
-  // Determinar si es para nuevo alumno o nuevo pago
-  if (input.id === 'fechaPago') {
-    nuevoAlumno.value.fechaPago = finalValue
-  } else if (input.id === 'fechaPagoPago') {
-    nuevoPago.value.fechaPago = finalValue
-  }
-}
-
-function handleNativeDateNuevo(e) {
-  nuevoAlumno.value.fechaPago = nativeDateToDisplay(e.target.value)
-}
-function handleNativeDatePago(e) {
-  nuevoPago.value.fechaPago = nativeDateToDisplay(e.target.value)
 }
 
 async function agregarAlumno() {
@@ -805,31 +777,12 @@ async function confirmarDelegacion() {
           <!-- Campos de Pago solo si NO estamos editando -->
           <div v-if="!isEditing">
           <div class="form-group">
-              <div class="date-field-header">
-                <label for="fechaPago">Fecha de Último Pago *</label>
-                <button type="button" class="date-toggle-btn" @click="useDatePickerNuevo = !useDatePickerNuevo">
-                  {{ useDatePickerNuevo ? '⌨️ Ingresar manual' : '📅 Usar calendario' }}
-                </button>
-              </div>
-              <!-- Native date picker -->
-              <input
-                v-if="useDatePickerNuevo"
-                id="fechaPagoCalendar"
-                type="date"
-                :value="displayToNativeDate(nuevoAlumno.fechaPago)"
-                @change="handleNativeDateNuevo"
-                @click="$event.target.showPicker ? $event.target.showPicker() : null"
+              <label for="fechaPago">Fecha de Último Pago *</label>
+              <DateField
+                input-id="fechaPago"
+                :model-value="nuevoAlumno.fechaPago"
                 :max="new Date().toISOString().slice(0,10)"
-              />
-              <!-- Manual text input -->
-              <input
-                v-else
-                id="fechaPago"
-                v-model="nuevoAlumno.fechaPago"
-                type="text"
-                placeholder="dd/mm/yyyy"
-                @input="handleDateInput"
-                maxlength="10"
+                @update:model-value="value => nuevoAlumno.fechaPago = value"
               />
             </div>
 
@@ -937,31 +890,12 @@ async function confirmarDelegacion() {
         
         <form @submit.prevent="registrarPago" class="modal-form">
           <div class="form-group">
-            <div class="date-field-header">
-              <label for="fechaPagoPago">Fecha de Pago *</label>
-              <button type="button" class="date-toggle-btn" @click="useDatePickerPago = !useDatePickerPago">
-                {{ useDatePickerPago ? '⌨️ Ingresar manual' : '📅 Usar calendario' }}
-              </button>
-            </div>
-            <!-- Native date picker -->
-            <input
-              v-if="useDatePickerPago"
-              id="fechaPagoPagoCalendar"
-              type="date"
-              :value="displayToNativeDate(nuevoPago.fechaPago)"
-              @change="handleNativeDatePago"
-              @click="$event.target.showPicker ? $event.target.showPicker() : null"
+            <label for="fechaPagoPago">Fecha de Pago *</label>
+            <DateField
+              input-id="fechaPagoPago"
+              :model-value="nuevoPago.fechaPago"
               :max="new Date().toISOString().slice(0,10)"
-            />
-            <!-- Manual text input -->
-            <input
-              v-else
-              id="fechaPagoPago"
-              v-model="nuevoPago.fechaPago"
-              type="text"
-              placeholder="dd/mm/yyyy"
-              @input="handleDateInput"
-              maxlength="10"
+              @update:model-value="value => nuevoPago.fechaPago = value"
             />
           </div>
 
@@ -1610,27 +1544,6 @@ async function confirmarDelegacion() {
   background: var(--input-bg);
   border-bottom: 1px solid var(--input-border);
 }
-
-.date-field-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 2px;
-}
-
-.date-toggle-btn {
-  background: transparent;
-  border: 1.5px solid var(--rheb-primary-green);
-  color: var(--rheb-primary-green);
-  border-radius: 20px;
-  padding: 3px 10px;
-  font-size: 0.72rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background 0.15s;
-  white-space: nowrap;
-}
-.date-toggle-btn:hover { background: rgba(34,197,94,0.1); }
 
 .select-input {
   padding: 12px 16px;

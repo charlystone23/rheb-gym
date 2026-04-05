@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed, watch } from "vue"
 import { useRouter } from "vue-router"
+import DateField from "../components/DateField.vue"
 import { MongoService } from "../services/mongoService"
 import { formatDateInput, getMonthRangeDisplay, parseDisplayDate } from "../utils/date"
 
@@ -246,23 +247,19 @@ function goBack() {
           <div class="trainer-date-filter">
             <div class="date-input-group">
               <label>Desde:</label>
-              <input 
-                type="text" 
-                :value="trainerFilters[stat.id]?.start || globalDateRange.start" 
-                placeholder="dd/mm/aaaa"
-                maxlength="10"
-                @input="e => updateTrainerFilter(stat.id, 'start', e.target.value)"
-              >
+              <DateField
+                :model-value="trainerFilters[stat.id]?.start || globalDateRange.start"
+                :input-id="`trainer-start-${stat.id}`"
+                @update:model-value="value => updateTrainerFilter(stat.id, 'start', value)"
+              />
             </div>
             <div class="date-input-group">
               <label>Hasta:</label>
-              <input 
-                type="text" 
-                :value="trainerFilters[stat.id]?.end || globalDateRange.end" 
-                placeholder="dd/mm/aaaa"
-                maxlength="10"
-                @input="e => updateTrainerFilter(stat.id, 'end', e.target.value)"
-              >
+              <DateField
+                :model-value="trainerFilters[stat.id]?.end || globalDateRange.end"
+                :input-id="`trainer-end-${stat.id}`"
+                @update:model-value="value => updateTrainerFilter(stat.id, 'end', value)"
+              />
             </div>
           </div>
 
