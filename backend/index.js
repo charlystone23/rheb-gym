@@ -51,8 +51,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-// Manejo explícito de preflight para todas las rutas
-app.options('*', cors(corsOptions));
 app.use(express.json());
 
 // MongoDB Connection
