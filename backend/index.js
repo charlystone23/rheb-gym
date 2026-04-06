@@ -12,11 +12,33 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors({
-    origin: process.env.FRONTEND_URL || '*', // Permite Netlify en producción o todo por ahora
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-}));
+const allowedOrigins = [
+    process.env.FRONTEND_URL,
+    process.env.FRONTEND_URL_2,
+    'https://rheb-app.netlify.app',
+    'http://localhost:5173',
+    'http://localhost:4173'
+].filter(Boolean);
+
+const corsOptions = {
+    origin(origin, callback) {
+        if (!origin) {
+            return callback(null, true);
+        }
+
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(new Error('Origin not allowed by CORS: ' + origin));
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json());
 
 // MongoDB Connection
