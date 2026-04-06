@@ -1,8 +1,9 @@
 <script setup>
 import { ref, onMounted } from "vue"
 import { useRouter } from "vue-router"
+import DateField from "../components/DateField.vue"
 import { MongoService } from "../services/mongoService"
-import { formatDateAR } from "../utils/date"
+import { formatDateAR, parseDisplayDate } from "../utils/date"
 
 const router = useRouter()
 const entrenadores = ref([])
@@ -10,6 +11,19 @@ const isLoading = ref(false)
 const error = ref("")
 const expandedTrainers = ref({})
 const expandedHistory = ref({})
+const membresias = ref([])
+const showEditPaymentModal = ref(false)
+const isSavingPayment = ref(false)
+const alumnoPagoEditando = ref(null)
+const entrenadorPagoEditando = ref(null)
+const pagoActual = ref({
+  pagoId: "",
+  fechaPago: "",
+  tipoPago: "efectivo",
+  membresiaId: "",
+  monto: "",
+  medio: "transferencia"
+})
 
 function normalizePaymentType(tipo) {
   const normalized = String(tipo || "").trim().toLowerCase()
@@ -24,6 +38,10 @@ function normalizePaymentType(tipo) {
 
 function isPromisePayment(tipo) {
   return normalizePaymentType(tipo) === "promesa de pago"
+}
+
+function isDiscountPayment(tipo) {
+  return normalizePaymentType(tipo) === "descuento"
 }
 
 function getPaymentLabel(pago) {
@@ -64,8 +82,12 @@ function isHistoryExpanded(alumnoId) {
 onMounted(async () => {
   try {
     isLoading.value = true
-    const data = await MongoService.getEntrenadores()
+    const [data, memberships] = await Promise.all([
+      MongoService.getEntrenadores(),
+      MongoService.getMembresias()
+    ])
     entrenadores.value = data || []
+    membresias.value = memberships || []
   } catch (e) {
     console.error("Error loading entrenadores:", e)
     error.value = "Error al cargar entrenadores"
@@ -156,6 +178,139 @@ function toggleTrainer(trainerId) {
 function isTrainerExpanded(trainerId) {
   return expandedTrainers.value[trainerId] || false
 }
+
+function getAlumnoId(alumno) {
+  return alumno?._id || alumno?.id || ""
+}
+
+function closeEditPaymentModal() {
+  showEditPaymentModal.value = false
+  isSavingPayment.value = false
+  alumnoPagoEditando.value = null
+  entrenadorPagoEditando.value = null
+  pagoActual.value = {
+    pagoId: "",
+    fechaPago: "",
+    tipoPago: "efectivo",
+    membresiaId: "",
+    monto: "",
+    medio: "transferencia"
+  }
+}
+
+function openEditPaymentModal(entrenador, alumno) {
+  const ultimoPago = getUltimoPago(alumno)
+  if (!ultimoPago?._id) {
+    error.value = "Este alumno no tiene pagos para editar."
+    return
+  }
+
+  const membresiaId =
+    ultimoPago.membresia?.id ||
+    ultimoPago.membresia?._id ||
+    membresias.value.find((m) => m.nombre === ultimoPago.membresia?.nombre)?._id ||
+    membresias.value[0]?._id ||
+    ""
+
+  entrenadorPagoEditando.value = entrenador
+  alumnoPagoEditando.value = alumno
+  pagoActual.value = {
+    pagoId: ultimoPago._id,
+    fechaPago: formatDateAR(ultimoPago.fecha),
+    tipoPago: normalizePaymentType(ultimoPago.tipo || ultimoPago.detalle) || "efectivo",
+    membresiaId,
+    monto: String(ultimoPago.monto ?? ultimoPago.membresia?.precio ?? ""),
+    medio: ultimoPago.medio || "transferencia"
+  }
+  error.value = ""
+  showEditPaymentModal.value = true
+}
+
+async function guardarPagoEditado() {
+  if (!alumnoPagoEditando.value || !pagoActual.value.pagoId) return
+
+  const fechaPagoDate = parseDisplayDate(pagoActual.value.fechaPago)
+  if (!fechaPagoDate) {
+    error.value = "La fecha ingresada no es válida."
+    return
+  }
+
+  if (
+    !isPromisePayment(pagoActual.value.tipoPago) &&
+    (pagoActual.value.monto === "" || Number.isNaN(Number(pagoActual.value.monto)))
+  ) {
+    error.value = "Ingresá un monto válido."
+    return
+  }
+
+  const monto = Number(pagoActual.value.monto || 0)
+  if (monto < 0) {
+    error.value = "El monto no puede ser negativo."
+    return
+  }
+
+  const ultimoPago = getUltimoPago(alumnoPagoEditando.value)
+  const selectedMembresia = membresias.value.find((m) => m._id === pagoActual.value.membresiaId)
+
+  if (!selectedMembresia) {
+    error.value = "Seleccioná una membresía válida."
+    return
+  }
+
+  const tipoNormalizado = normalizePaymentType(pagoActual.value.tipoPago)
+
+  const payload = {
+    fecha: fechaPagoDate,
+    tipo: tipoNormalizado,
+    detalle: isPromisePayment(tipoNormalizado)
+      ? "Promesa de Pago"
+      : isDiscountPayment(tipoNormalizado)
+        ? "Descuento"
+        : "",
+    medio: isDiscountPayment(tipoNormalizado) ? (pagoActual.value.medio || "transferencia") : "",
+    monto: isPromisePayment(tipoNormalizado) ? 0 : monto,
+    membresia: {
+      id: selectedMembresia._id,
+      nombre: selectedMembresia.nombre,
+      precio: selectedMembresia.precio
+    },
+    esParcial: ultimoPago?.esParcial || false,
+    completaParcial: ultimoPago?.completaParcial || false,
+    montoObjetivo: ultimoPago?.montoObjetivo ?? null,
+    saldoPendiente: ultimoPago?.saldoPendiente ?? 0
+  }
+
+  try {
+    isSavingPayment.value = true
+    error.value = ""
+
+    const alumnoActualizado = await MongoService.updatePago(
+      getAlumnoId(alumnoPagoEditando.value),
+      pagoActual.value.pagoId,
+      payload
+    )
+
+    entrenadores.value = entrenadores.value.map((entrenador) => {
+      if (entrenador._id !== entrenadorPagoEditando.value?._id) return entrenador
+
+      return {
+        ...entrenador,
+        alumnos: (entrenador.alumnos || []).map((alumno) =>
+          getAlumnoId(alumno) === getAlumnoId(alumnoPagoEditando.value)
+            ? alumnoActualizado
+            : alumno
+        )
+      }
+    })
+
+    closeEditPaymentModal()
+  } catch (e) {
+    console.error("Error updating payment:", e)
+    error.value = e.message || "No se pudo actualizar el pago."
+  } finally {
+    isSavingPayment.value = false
+  }
+}
 </script>
 
 <template>
@@ -222,15 +377,24 @@ function isTrainerExpanded(trainerId) {
                     </span>
                   </p>
                   <p v-else class="payment-info">Sin pagos registrados</p>
-                  
-                  <!-- Historial Toggle -->
-                  <button 
-                    v-if="getUltimosPagos(alumno).length > 0"
-                    @click="toggleHistory(alumno._id || alumno.id)" 
-                    class="history-toggle-btn"
-                  >
-                    {{ isHistoryExpanded(alumno._id || alumno.id) ? 'Ocultar' : 'Ver' }} Historial
-                  </button>
+                  <div v-if="getUltimoPago(alumno) || getUltimosPagos(alumno).length > 0" class="payment-actions-row">
+                    <button
+                      v-if="getUltimoPago(alumno)"
+                      @click="openEditPaymentModal(entrenador, alumno)"
+                      class="edit-payment-button"
+                    >
+                      Editar último pago
+                    </button>
+                    
+                    <!-- Historial Toggle -->
+                    <button 
+                      v-if="getUltimosPagos(alumno).length > 0"
+                      @click="toggleHistory(alumno._id || alumno.id)" 
+                      class="history-toggle-btn"
+                    >
+                      {{ isHistoryExpanded(alumno._id || alumno.id) ? 'Ocultar' : 'Ver' }} Historial
+                    </button>
+                  </div>
 
                   <!-- Historial List -->
                   <div v-if="isHistoryExpanded(alumno._id || alumno.id)" class="admin-history-list">
@@ -274,6 +438,94 @@ function isTrainerExpanded(trainerId) {
 
       <div v-if="entrenadores.length === 0" class="empty-state">
         <p>No hay entrenadores registrados</p>
+      </div>
+    </div>
+
+    <div
+      v-if="showEditPaymentModal && alumnoPagoEditando"
+      class="modal-overlay"
+      @click.self="closeEditPaymentModal"
+    >
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Editar Último Pago</h2>
+          <button @click="closeEditPaymentModal" class="close-button">×</button>
+        </div>
+
+        <div class="modal-form">
+          <div class="form-group">
+            <label>Alumno</label>
+            <div class="payment-edit-summary">
+              {{ alumnoPagoEditando.nombre }} {{ alumnoPagoEditando.apellido }}
+              <span v-if="entrenadorPagoEditando">
+                (de {{ entrenadorPagoEditando.nombre }} {{ entrenadorPagoEditando.apellido }})
+              </span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="edit-fecha-pago">Fecha de Pago *</label>
+            <DateField
+              id="edit-fecha-pago"
+              v-model="pagoActual.fechaPago"
+              placeholder="dd/mm/aaaa"
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="edit-tipo-pago">Tipo de Pago *</label>
+            <select id="edit-tipo-pago" v-model="pagoActual.tipoPago">
+              <option value="efectivo">Efectivo</option>
+              <option value="transferencia">Transferencia</option>
+              <option value="descuento">Descuento</option>
+              <option value="promesa de pago">Promesa de Pago</option>
+            </select>
+          </div>
+
+          <div v-if="isDiscountPayment(pagoActual.tipoPago)" class="form-group">
+            <label for="edit-medio-pago">Tipo del descuento *</label>
+            <select id="edit-medio-pago" v-model="pagoActual.medio">
+              <option value="transferencia">Transferencia</option>
+              <option value="efectivo">Efectivo</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="edit-membresia">Membresía *</label>
+            <select id="edit-membresia" v-model="pagoActual.membresiaId">
+              <option value="" disabled>Seleccioná una membresía</option>
+              <option v-for="membresia in membresias" :key="membresia._id" :value="membresia._id">
+                {{ membresia.nombre }} - ${{ membresia.precio }}
+              </option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="edit-monto">Monto *</label>
+            <input
+              id="edit-monto"
+              v-model="pagoActual.monto"
+              type="number"
+              min="0"
+              step="0.01"
+              :disabled="isPromisePayment(pagoActual.tipoPago)"
+              placeholder="Ej: 38000"
+            />
+          </div>
+
+          <div v-if="error" class="error-message">
+            {{ error }}
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" @click="closeEditPaymentModal" class="cancel-button" :disabled="isSavingPayment">
+              Cancelar
+            </button>
+            <button type="button" @click="guardarPagoEditado" class="submit-button" :disabled="isSavingPayment">
+              {{ isSavingPayment ? "Guardando..." : "Guardar Cambios" }}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -523,6 +775,30 @@ function isTrainerExpanded(trainerId) {
   gap: 4px;
 }
 
+.payment-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  align-items: center;
+}
+
+.edit-payment-button {
+  background: rgba(255, 215, 0, 0.08);
+  color: var(--rheb-primary-green);
+  border: 1px solid var(--rheb-primary-green);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.edit-payment-button:hover {
+  background: rgba(255, 215, 0, 0.08);
+}
+
 .payment-type {
   color: var(--header-text);
   text-transform: capitalize;
@@ -664,6 +940,8 @@ function isTrainerExpanded(trainerId) {
   border: 2px solid var(--input-border);
   border-radius: 8px;
   font-size: 1rem;
+  background: var(--input-bg);
+  color: var(--header-text);
   transition: border-color 0.2s;
 }
 
@@ -679,6 +957,15 @@ function isTrainerExpanded(trainerId) {
   padding: 12px;
   border-radius: 8px;
   font-size: 0.875rem;
+}
+
+.payment-edit-summary {
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--header-text);
+  font-weight: 600;
 }
 
 .modal-actions {
@@ -736,15 +1023,21 @@ function isTrainerExpanded(trainerId) {
   border: 2px solid var(--rheb-primary-green);
 }
 .history-toggle-btn {
-  background: none;
-  border: none;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   color: var(--rheb-primary-green);
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  padding: 0;
-  margin-top: 4px;
-  text-decoration: underline;
+  padding: 8px 12px;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: all 0.2s;
+}
+
+.history-toggle-btn:hover {
+  border-color: var(--rheb-primary-green);
+  background: rgba(255, 215, 0, 0.08);
 }
 
 .admin-history-list {

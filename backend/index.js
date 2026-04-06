@@ -765,6 +765,42 @@ app.post('/api/alumnos/:id/pagos', async (req, res) => {
     }
 });
 
+app.put('/api/alumnos/:id/pagos/:pagoId', async (req, res) => {
+    try {
+        const { id, pagoId } = req.params;
+        const alumno = await Alumno.findById(id);
+
+        if (!alumno) return res.status(404).json({ error: 'Alumno no encontrado' });
+
+        const pago = alumno.historialPagos.id(pagoId);
+        if (!pago) return res.status(404).json({ error: 'Pago no encontrado' });
+
+        const allowedFields = [
+            'fecha',
+            'tipo',
+            'detalle',
+            'medio',
+            'monto',
+            'membresia',
+            'esParcial',
+            'completaParcial',
+            'montoObjetivo',
+            'saldoPendiente'
+        ];
+
+        allowedFields.forEach((field) => {
+            if (req.body[field] !== undefined) {
+                pago[field] = req.body[field];
+            }
+        });
+
+        await alumno.save();
+        res.json(alumno);
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
 // --- EXPENSE ROUTES ---
 
 app.get('/api/expenses', async (req, res) => {

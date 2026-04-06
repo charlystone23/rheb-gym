@@ -218,6 +218,24 @@ export const MongoService = {
         }
     },
 
+    async updatePago(alumnoId, pagoId, pago) {
+        try {
+            const response = await fetch(`${API_URL}/alumnos/${alumnoId}/pagos/${pagoId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(pago)
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Error al actualizar pago');
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
     async getExpenses(month = null, year = null) {
         try {
             const params = new URLSearchParams();
