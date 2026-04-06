@@ -80,7 +80,32 @@ function openPicker() {
 
 .date-text-input {
   width: 100%;
-  padding-right: 46px;
+  min-height: 56px;
+  padding: 15px 64px 15px 16px;
+  border: 2px solid var(--input-border);
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--card-bg) 0%, var(--input-bg) 100%);
+  color: var(--header-text);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.date-text-input::placeholder {
+  color: var(--subtitle-text);
+  font-weight: 500;
+}
+
+.date-text-input:hover {
+  border-color: color-mix(in srgb, var(--rheb-primary-green) 45%, var(--input-border));
+}
+
+.date-text-input:focus {
+  outline: none;
+  border-color: var(--rheb-primary-green);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--rheb-primary-green) 18%, transparent);
 }
 
 .calendar-trigger {
@@ -89,27 +114,34 @@ function openPicker() {
   right: 10px;
   transform: translateY(-50%);
   min-height: 0;
-  width: 28px;
-  height: 28px;
+  width: 40px;
+  height: 40px;
   padding: 0;
-  border-radius: 8px;
-  border: 0;
-  background: transparent;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--rheb-primary-green) 30%, var(--input-border));
+  background: color-mix(in srgb, var(--rheb-primary-green) 10%, var(--card-bg));
   color: var(--header-text);
   box-shadow: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  transition: background 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
 }
 
 .calendar-trigger svg {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   fill: currentColor;
 }
 
 .calendar-trigger:hover {
-  background: color-mix(in srgb, var(--input-border) 40%, transparent);
+  background: color-mix(in srgb, var(--rheb-primary-green) 18%, var(--card-bg));
+  border-color: color-mix(in srgb, var(--rheb-primary-green) 55%, var(--input-border));
+}
+
+.calendar-trigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--rheb-primary-green) 18%, transparent);
 }
 
 .native-date-proxy {

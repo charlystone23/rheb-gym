@@ -99,6 +99,10 @@ function goToStats() {
   router.push("/admin/stats")
 }
 
+function goToExpenses() {
+  router.push("/admin/expenses")
+}
+
 function goToMemberships() {
   router.push("/admin/memberships")
 }
@@ -170,6 +174,12 @@ function goToSchedules() {
           <div class="card-icon">📊</div>
           <h3>Estadísticas</h3>
           <p>Visualiza métricas y reportes del gimnasio</p>
+        </div>
+
+        <div class="card" @click="goToExpenses">
+          <div class="card-icon">ðŸ§¾</div>
+          <h3>Gastos</h3>
+          <p>RegistrÃ¡ egresos mensuales con detalle y fecha</p>
         </div>
 
         <div class="card" @click="goToMemberships">

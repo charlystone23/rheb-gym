@@ -3,16 +3,16 @@ import { ref, onMounted, computed, watch } from "vue"
 import { useRouter } from "vue-router"
 import DateField from "../components/DateField.vue"
 import { MongoService } from "../services/mongoService"
-import { formatDateInput, getMonthRangeDisplay, parseDisplayDate } from "../utils/date"
+import { formatDateAR, formatDateInput, getMonthRangeDisplay, parseDisplayDate } from "../utils/date"
 import { getStoredUser } from "../utils/authContext"
 
 const router = useRouter()
 const entrenadores = ref([])
+const expenses = ref([])
 const isLoading = ref(false)
 const error = ref("")
 const currentUser = ref(null)
 
-// Filtros Globales
 const hoy = new Date()
 const selectedMonth = ref(hoy.getMonth())
 const selectedYear = ref(hoy.getFullYear())
@@ -24,7 +24,7 @@ const meses = [
   { val: 9, label: "Octubre" }, { val: 10, label: "Noviembre" }, { val: 11, label: "Diciembre" }
 ]
 
-const trainerFilters = ref({}) // { trainerId: { start, end } }
+const trainerFilters = ref({})
 
 const globalDateRange = computed(() => {
   return getMonthRangeDisplay(selectedYear.value, selectedMonth.value)
@@ -44,11 +44,25 @@ function syncTrainerFiltersWithGlobalRange() {
 }
 
 onMounted(async () => {
+  await loadStatsData()
+})
+
+watch([selectedMonth, selectedYear], async () => {
+  syncTrainerFiltersWithGlobalRange()
+  await loadExpenses()
+})
+
+async function loadStatsData() {
   try {
     isLoading.value = true
     currentUser.value = getStoredUser()
-    const data = await MongoService.getEntrenadores()
-    entrenadores.value = data || []
+    const [trainersData, expensesData] = await Promise.all([
+      MongoService.getEntrenadores(),
+      MongoService.getExpenses(selectedMonth.value + 1, selectedYear.value)
+    ])
+
+    entrenadores.value = trainersData || []
+    expenses.value = expensesData || []
     syncTrainerFiltersWithGlobalRange()
   } catch (e) {
     console.error("Error loading stats:", e)
@@ -56,7 +70,16 @@ onMounted(async () => {
   } finally {
     isLoading.value = false
   }
-})
+}
+
+async function loadExpenses() {
+  try {
+    expenses.value = await MongoService.getExpenses(selectedMonth.value + 1, selectedYear.value)
+  } catch (e) {
+    console.error("Error loading expenses:", e)
+    error.value = "No se pudieron cargar los gastos del mes."
+  }
+}
 
 const entrenadoresVisibles = computed(() => {
   if (!currentUser.value?.linkedTrainerId) {
@@ -74,46 +97,75 @@ const entrenadoresVisibles = computed(() => {
 
 function getUltimoPago(alumno) {
   if (!alumno.historialPagos || alumno.historialPagos.length === 0) return null
-  return [...alumno.historialPagos].sort((a, b) => new Date(b.fecha) - new Date(a.fecha))[0]
+  return [...alumno.historialPagos].sort(comparePagosDesc)[0]
+}
+
+function isPromisePayment(tipo) {
+  const normalized = String(tipo || "").trim().toLowerCase()
+  return normalized === "promesa de pago" || normalized === "promesa_pago"
+}
+
+function comparePagosDesc(a, b) {
+  const fechaDiff = new Date(b.fecha) - new Date(a.fecha)
+  if (fechaDiff !== 0) return fechaDiff
+
+  const createdDiff = new Date(b.createdAt || b.clientCreatedAt || 0) - new Date(a.createdAt || a.clientCreatedAt || 0)
+  if (createdDiff !== 0) return createdDiff
+
+  if (a.completaParcial && !b.completaParcial) return -1
+  if (b.completaParcial && !a.completaParcial) return 1
+  if (a.esParcial && !b.esParcial) return 1
+  if (b.esParcial && !a.esParcial) return -1
+
+  return 0
+}
+
+function hasPendingPartialPayment(alumno) {
+  const ultimoPago = getUltimoPago(alumno)
+  return Boolean(ultimoPago?.esParcial && Number(ultimoPago?.saldoPendiente || 0) > 0)
 }
 
 function getPaymentStatus(alumno) {
   const ultimoPago = getUltimoPago(alumno)
-  const hoy = new Date()
-  hoy.setHours(0, 0, 0, 0)
-  
-  let proximaFechaPago = new Date()
-  if (!ultimoPago) {
-    proximaFechaPago = new Date(alumno.fechaRegistro || alumno.createdAt || hoy)
-  } else {
-    proximaFechaPago = new Date(ultimoPago.fecha)
-    proximaFechaPago.setDate(proximaFechaPago.getDate() + 30)
+  if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno))) {
+    return "red"
   }
-  proximaFechaPago.setHours(0, 0, 0, 0)
-  
-  const diffTime = proximaFechaPago - hoy
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  let nextPaymentDate = new Date()
+  if (!ultimoPago) {
+    nextPaymentDate = new Date(alumno.fechaRegistro || alumno.createdAt || today)
+  } else {
+    nextPaymentDate = new Date(ultimoPago.fecha)
+    nextPaymentDate.setDate(nextPaymentDate.getDate() + 30)
+  }
+  nextPaymentDate.setHours(0, 0, 0, 0)
+
+  const diffTime = nextPaymentDate - today
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-  
+
   if (diffDays < 0) return "red"
   if (diffDays <= 5) return "yellow"
   return "green"
 }
 
 const statsPorEntrenador = computed(() => {
-  return entrenadoresVisibles.value.map(entrenador => {
+  return entrenadoresVisibles.value.map((entrenador) => {
     const totalAlumnos = entrenador.alumnos.length
-    const alDia = entrenador.alumnos.filter(a => getPaymentStatus(a) === 'green').length
-    const proximoVencer = entrenador.alumnos.filter(a => getPaymentStatus(a) === 'yellow').length
-    const deuda = entrenador.alumnos.filter(a => getPaymentStatus(a) === 'red').length
-    
-    // Obtener filtros del entrenador o usar default
+    const alDia = entrenador.alumnos.filter((a) => getPaymentStatus(a) === "green").length
+    const proximoVencer = entrenador.alumnos.filter((a) => getPaymentStatus(a) === "yellow").length
+    const deuda = entrenador.alumnos.filter((a) => getPaymentStatus(a) === "red").length
+
     const filter = trainerFilters.value[entrenador._id] || globalDateRange.value
     const startDate = parseDisplayDate(filter.start)
     const endDate = parseDisplayDate(filter.end)
+
     if (!startDate || !endDate) {
       return {
         id: entrenador._id,
-        nombre: `${entrenador.nombre} ${entrenador.apellido || ''}`,
+        nombre: `${entrenador.nombre} ${entrenador.apellido || ""}`.trim(),
         total: totalAlumnos,
         alDia,
         proximoVencer,
@@ -126,20 +178,19 @@ const statsPorEntrenador = computed(() => {
     startDate.setHours(0, 0, 0, 0)
     endDate.setHours(23, 59, 59, 999)
 
-    // Calcular saldo histórico en el rango seleccionado
     let saldoHistorico = 0
-    entrenador.alumnos.forEach(alumno => {
-      alumno.historialPagos.forEach(pago => {
+    entrenador.alumnos.forEach((alumno) => {
+      alumno.historialPagos.forEach((pago) => {
         const fechaPago = new Date(pago.fecha)
         if (fechaPago >= startDate && fechaPago <= endDate) {
-          saldoHistorico += (pago.monto || 0)
+          saldoHistorico += pago.monto || 0
         }
       })
     })
-    
+
     return {
       id: entrenador._id,
-      nombre: `${entrenador.nombre} ${entrenador.apellido || ''}`,
+      nombre: `${entrenador.nombre} ${entrenador.apellido || ""}`.trim(),
       total: totalAlumnos,
       alDia,
       proximoVencer,
@@ -152,31 +203,36 @@ const statsPorEntrenador = computed(() => {
 
 const statsGenerales = computed(() => {
   if (statsPorEntrenador.value.length === 0) return null
-  
-  const totalAlumnos = statsPorEntrenador.value.reduce((acc, s) => acc + s.total, 0)
-  const alDia = statsPorEntrenador.value.reduce((acc, s) => acc + s.alDia, 0)
-  const proximoVencer = statsPorEntrenador.value.reduce((acc, s) => acc + s.proximoVencer, 0)
-  const deuda = statsPorEntrenador.value.reduce((acc, s) => acc + s.deuda, 0)
-  
-  // Calcular recaudación del mes seleccionado (pagos cuya fecha cae en ese mes)
-  let recaudacionMes = 0
-  entrenadoresVisibles.value.forEach(entrenador => {
-    entrenador.alumnos.forEach(alumno => {
-      alumno.historialPagos.forEach(pago => {
+
+  const totalAlumnos = statsPorEntrenador.value.reduce((acc, stat) => acc + stat.total, 0)
+  const alDia = statsPorEntrenador.value.reduce((acc, stat) => acc + stat.alDia, 0)
+  const proximoVencer = statsPorEntrenador.value.reduce((acc, stat) => acc + stat.proximoVencer, 0)
+  const deuda = statsPorEntrenador.value.reduce((acc, stat) => acc + stat.deuda, 0)
+
+  let ingresosMes = 0
+  entrenadoresVisibles.value.forEach((entrenador) => {
+    entrenador.alumnos.forEach((alumno) => {
+      alumno.historialPagos.forEach((pago) => {
         const fechaPago = new Date(pago.fecha)
         if (fechaPago.getMonth() === selectedMonth.value && fechaPago.getFullYear() === selectedYear.value) {
-          recaudacionMes += (pago.monto || 0)
+          ingresosMes += pago.monto || 0
         }
       })
     })
   })
-  
+
+  const gastosMes = expenses.value.reduce((acc, expense) => acc + (Number(expense.monto) || 0), 0)
+  const recaudacionNeta = ingresosMes - gastosMes
+
   return {
     totalAlumnos,
     alDia,
     proximoVencer,
     deuda,
-    recaudacionMes,
+    ingresosMes,
+    gastosMes,
+    recaudacionNeta,
+    cantidadGastos: expenses.value.length,
     porcentajeActivos: totalAlumnos > 0 ? Math.round(((alDia + proximoVencer) / totalAlumnos) * 100) : 0
   }
 })
@@ -188,15 +244,16 @@ function updateTrainerFilter(trainerId, field, value) {
       end: globalDateRange.value.end
     }
   }
+
   trainerFilters.value[trainerId][field] = formatDateInput(value)
 }
 
-watch([selectedMonth, selectedYear], () => {
-  syncTrainerFiltersWithGlobalRange()
-})
-
 function goBack() {
   router.push("/admin")
+}
+
+function goToExpenses() {
+  router.push("/admin/expenses")
 }
 </script>
 
@@ -208,27 +265,29 @@ function goBack() {
         <img src="/logo.svg" alt="Potenza Gym Logo" class="logo-small" />
         <div>
           <h1>Estadísticas</h1>
-          <p class="subtitle">Métricas de rendimiento por entrenador</p>
+          <p class="subtitle">Ingresos, gastos y estado general del gimnasio</p>
         </div>
       </div>
-      
-      <!-- Selector de Mes Global -->
-      <div class="header-filters">
-        <label for="month-select">Mes de Recaudación:</label>
-        <select id="month-select" v-model="selectedMonth" class="filter-select">
-          <option v-for="m in meses" :key="m.val" :value="m.val">{{ m.label }}</option>
-        </select>
-        <select v-model="selectedYear" class="filter-select">
-          <option v-for="y in [2024, 2025, 2026]" :key="y" :value="y">{{ y }}</option>
-        </select>
+
+      <div class="header-right">
+        <div class="header-filters">
+          <label for="month-select">Mes:</label>
+          <select id="month-select" v-model="selectedMonth" class="filter-select">
+            <option v-for="m in meses" :key="m.val" :value="m.val">{{ m.label }}</option>
+          </select>
+          <select v-model="selectedYear" class="filter-select">
+            <option v-for="y in [2024, 2025, 2026, 2027]" :key="y" :value="y">{{ y }}</option>
+          </select>
+        </div>
+
+        <button @click="goToExpenses" class="expense-link-button">Cargar gastos</button>
       </div>
     </div>
 
     <div v-if="isLoading" class="loading">Cargando estadísticas...</div>
     <div v-else-if="error" class="error-msg">{{ error }}</div>
-    
+
     <div v-else class="admin-stats-content">
-      <!-- Resumen General -->
       <div class="stats-summary" v-if="statsGenerales">
         <div class="summary-card total">
           <span class="label">Total Alumnos</span>
@@ -246,13 +305,50 @@ function goBack() {
           <span class="label">En Deuda</span>
           <span class="value">{{ statsGenerales.deuda }}</span>
         </div>
-        <div class="summary-card revenue">
-          <span class="label">Recaudación Mes</span>
-          <span class="value">${{ statsGenerales.recaudacionMes.toLocaleString() }}</span>
+        <div class="summary-card income">
+          <span class="label">Ingresos del Mes</span>
+          <span class="value">${{ statsGenerales.ingresosMes.toLocaleString() }}</span>
+        </div>
+        <div class="summary-card expense">
+          <span class="label">Gastos del Mes</span>
+          <span class="value">${{ statsGenerales.gastosMes.toLocaleString() }}</span>
+        </div>
+        <div class="summary-card net">
+          <span class="label">Recaudación Neta</span>
+          <span class="value">${{ statsGenerales.recaudacionNeta.toLocaleString() }}</span>
         </div>
       </div>
 
-      <!-- Detalle por Entrenador -->
+      <div class="expense-summary-panel" v-if="statsGenerales">
+        <div>
+          <h2>Resumen económico de {{ meses[selectedMonth].label }} {{ selectedYear }}</h2>
+          <p>
+            Se registraron {{ statsGenerales.cantidadGastos }} gasto<span v-if="statsGenerales.cantidadGastos !== 1">s</span>
+            este mes. La recaudación neta ya descuenta esos egresos.
+          </p>
+        </div>
+        <button @click="goToExpenses" class="expense-link-button secondary">Administrar gastos</button>
+      </div>
+
+      <div class="expenses-list-panel">
+        <div class="panel-header">
+          <h3>Gastos del mes</h3>
+          <span class="panel-total">${{ expenses.reduce((acc, expense) => acc + (Number(expense.monto) || 0), 0).toLocaleString() }}</span>
+        </div>
+        <div v-if="expenses.length === 0" class="empty-expenses">
+          No hay gastos cargados para este mes.
+        </div>
+        <div v-else class="expenses-list">
+          <article v-for="expense in expenses" :key="expense._id" class="expense-item">
+            <div class="expense-item-main">
+              <span class="expense-detail">{{ expense.detalle }}</span>
+              <span class="expense-date">{{ formatDateAR(expense.fecha) }}</span>
+            </div>
+            <span class="expense-amount">${{ Number(expense.monto || 0).toLocaleString() }}</span>
+          </article>
+        </div>
+      </div>
+
       <div class="trainer-stats-grid">
         <div v-for="stat in statsPorEntrenador" :key="stat.id" class="trainer-stat-card">
           <div class="card-header">
@@ -260,7 +356,6 @@ function goBack() {
             <div class="activos-badge">{{ stat.porcentajeActivos }}% Activos</div>
           </div>
 
-          <!-- Filtro de Fecha por Entrenador -->
           <div class="trainer-date-filter">
             <div class="date-input-group">
               <label>Desde:</label>
@@ -281,10 +376,10 @@ function goBack() {
           </div>
 
           <div class="saldo-display">
-            <span class="saldo-label">Saldo en periodo:</span>
+            <span class="saldo-label">Ingresos en período:</span>
             <span class="saldo-value">${{ stat.saldoHistorico.toLocaleString() }}</span>
           </div>
-          
+
           <div class="stat-rows">
             <div class="stat-row">
               <span>Total Alumnos:</span>
@@ -306,16 +401,16 @@ function goBack() {
 
           <div class="progress-bar-container">
             <div class="progress-bar">
-              <div 
-                class="progress-fill green" 
+              <div
+                class="progress-fill green"
                 :style="{ width: (stat.total > 0 ? (stat.alDia / stat.total) * 100 : 0) + '%' }"
               ></div>
-              <div 
-                class="progress-fill yellow" 
+              <div
+                class="progress-fill yellow"
                 :style="{ width: (stat.total > 0 ? (stat.proximoVencer / stat.total) * 100 : 0) + '%' }"
               ></div>
-              <div 
-                class="progress-fill red" 
+              <div
+                class="progress-fill red"
                 :style="{ width: (stat.total > 0 ? (stat.deuda / stat.total) * 100 : 0) + '%' }"
               ></div>
             </div>
@@ -335,19 +430,48 @@ function goBack() {
   padding-bottom: 40px;
 }
 
-.admin-stats-header {
+.admin-stats-header,
+.header-left,
+.header-right,
+.header-filters,
+.expense-summary-panel,
+.panel-header,
+.expense-item,
+.saldo-display,
+.card-header,
+.stat-row {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+}
+
+.admin-stats-header,
+.expense-summary-panel,
+.panel-header,
+.expense-item,
+.saldo-display,
+.card-header,
+.stat-row {
+  justify-content: space-between;
+}
+
+.admin-stats-header {
   margin-bottom: 24px;
-  flex-wrap: wrap;
   gap: 20px;
+  flex-wrap: wrap;
+}
+
+.header-left,
+.header-right,
+.header-filters {
+  gap: 12px;
+}
+
+.header-right {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .header-filters {
-  display: flex;
-  align-items: center;
-  gap: 12px;
   background: var(--card-bg);
   padding: 10px 16px;
   border-radius: 10px;
@@ -370,21 +494,32 @@ function goBack() {
   outline: none;
 }
 
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
+.back-button,
+.expense-link-button {
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .back-button {
   background-color: var(--rheb-dark-grey);
   color: var(--rheb-primary-green);
   border: 2px solid var(--rheb-black);
-  border-radius: 8px;
   padding: 8px 12px;
   font-size: 1.2rem;
-  font-weight: 700;
-  cursor: pointer;
+}
+
+.expense-link-button {
+  border: 2px solid var(--rheb-black);
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #FFA500 100%);
+  color: var(--rheb-black);
+  padding: 10px 16px;
+}
+
+.expense-link-button.secondary {
+  background: transparent;
+  border-color: var(--input-border);
+  color: var(--header-text);
 }
 
 .logo-small {
@@ -406,9 +541,9 @@ function goBack() {
 
 .stats-summary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 16px;
-  margin-bottom: 32px;
+  margin-bottom: 24px;
 }
 
 .summary-card {
@@ -426,12 +561,9 @@ function goBack() {
 .summary-card.active { border-color: #22c55e; }
 .summary-card.warning { border-color: #eab308; }
 .summary-card.danger { border-color: #ef4444; }
-.summary-card.revenue { 
-  border-color: var(--rheb-primary-green); 
-  background: var(--input-bg);
-}
-.summary-card.revenue .label { color: var(--rheb-primary-green); }
-.summary-card.revenue .value { color: var(--header-text); }
+.summary-card.income { border-color: #0f766e; }
+.summary-card.expense { border-color: #dc2626; }
+.summary-card.net { border-color: var(--rheb-primary-green); background: var(--input-bg); }
 
 .summary-card .label {
   font-size: 0.8rem;
@@ -439,12 +571,90 @@ function goBack() {
   text-transform: uppercase;
   font-weight: 700;
   margin-bottom: 4px;
+  text-align: center;
 }
 
 .summary-card .value {
-  font-size: 1.8rem;
+  font-size: 1.7rem;
   font-weight: 800;
   color: var(--header-text);
+  text-align: center;
+}
+
+.expense-summary-panel,
+.expenses-list-panel,
+.trainer-stat-card {
+  background: var(--card-bg);
+  border-radius: 16px;
+  padding: 20px 24px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  border: 2px solid var(--card-border);
+}
+
+.expense-summary-panel {
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.expense-summary-panel h2,
+.panel-header h3,
+.card-header h3 {
+  margin: 0;
+  color: var(--header-text);
+}
+
+.expense-summary-panel p {
+  margin: 6px 0 0;
+  color: var(--subtitle-text);
+}
+
+.expenses-list-panel {
+  margin-bottom: 24px;
+}
+
+.panel-total {
+  color: #b91c1c;
+  font-size: 1.3rem;
+  font-weight: 800;
+}
+
+.expenses-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.expense-item {
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  flex-wrap: wrap;
+}
+
+.expense-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.expense-detail {
+  color: var(--header-text);
+  font-weight: 700;
+}
+
+.expense-date,
+.empty-expenses {
+  color: var(--subtitle-text);
+}
+
+.expense-amount {
+  color: #b91c1c;
+  font-weight: 800;
+  font-size: 1.05rem;
 }
 
 .trainer-stats-grid {
@@ -454,25 +664,14 @@ function goBack() {
 }
 
 .trainer-stat-card {
-  background: var(--card-bg);
-  border-radius: 16px;
-  padding: 24px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  border: 2px solid var(--rheb-primary-green);
+  border-color: var(--rheb-primary-green);
 }
 
 .card-header {
-  display: flex;
-  justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 16px;
   border-bottom: 1px solid #eee;
   padding-bottom: 12px;
-}
-
-.card-header h3 {
-  margin: 0;
-  color: var(--header-text);
 }
 
 .activos-badge {
@@ -528,40 +727,11 @@ function goBack() {
   color-scheme: light;
 }
 
-.date-input-group input:focus {
-  outline: none;
-  border-color: var(--rheb-primary-green);
-  box-shadow: 0 0 0 4px rgba(255, 215, 0, 0.1);
-  background: var(--card-bg);
-}
-
-.date-input-group input:hover {
-  border-color: #cbd5e1;
-}
-
-.date-input-group input::-webkit-calendar-picker-indicator {
-  cursor: pointer;
-  opacity: 0.95;
-  filter: var(--calendar-icon-filter);
-}
-
-.date-input-group input::-webkit-datetime-edit,
-.date-input-group input::-webkit-datetime-edit-fields-wrapper,
-.date-input-group input::-webkit-datetime-edit-text,
-.date-input-group input::-webkit-datetime-edit-month-field,
-.date-input-group input::-webkit-datetime-edit-day-field,
-.date-input-group input::-webkit-datetime-edit-year-field {
-  color: var(--header-text);
-}
-
 .saldo-display {
   background: var(--rheb-dark-grey);
   color: var(--rheb-primary-green);
   padding: 12px;
   border-radius: 8px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   margin-bottom: 16px;
 }
 
@@ -580,8 +750,6 @@ function goBack() {
 }
 
 .stat-row {
-  display: flex;
-  justify-content: space-between;
   margin-bottom: 8px;
   font-size: 0.95rem;
 }
@@ -614,7 +782,8 @@ function goBack() {
 .progress-fill.yellow { background-color: #eab308; }
 .progress-fill.red { background-color: #ef4444; }
 
-.loading, .error-msg {
+.loading,
+.error-msg {
   text-align: center;
   padding: 40px;
   font-size: 1.2rem;

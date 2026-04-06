@@ -218,6 +218,56 @@ export const MongoService = {
         }
     },
 
+    async getExpenses(month = null, year = null) {
+        try {
+            const params = new URLSearchParams();
+            if (month !== null && month !== undefined) params.append('month', String(month));
+            if (year !== null && year !== undefined) params.append('year', String(year));
+
+            const query = params.toString();
+            const response = await fetch(`${API_URL}/expenses${query ? `?${query}` : ''}`);
+            if (!response.ok) throw new Error('Error al obtener gastos');
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            return [];
+        }
+    },
+
+    async createExpense(data) {
+        try {
+            const response = await fetch(`${API_URL}/expenses`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Error al crear gasto');
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
+    async deleteExpense(id) {
+        try {
+            const response = await fetch(`${API_URL}/expenses/${id}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Error al eliminar gasto');
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
     async updateAlumno(id, alumno) {
         try {
             const response = await fetch(`${API_URL}/alumnos/${id}`, {

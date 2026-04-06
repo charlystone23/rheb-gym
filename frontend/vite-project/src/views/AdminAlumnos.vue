@@ -11,6 +11,48 @@ const error = ref("")
 const expandedTrainers = ref({})
 const expandedHistory = ref({})
 
+function normalizePaymentType(tipo) {
+  const normalized = String(tipo || "").trim().toLowerCase()
+
+  if (normalized === "promesa de pago" || normalized === "promesa_pago") return "promesa de pago"
+  if (normalized === "descuento") return "descuento"
+  if (normalized === "efectivo") return "efectivo"
+  if (normalized === "transferencia") return "transferencia"
+
+  return normalized
+}
+
+function isPromisePayment(tipo) {
+  return normalizePaymentType(tipo) === "promesa de pago"
+}
+
+function getPaymentLabel(pago) {
+  if (!pago) return ""
+  if (pago.esParcial) return `Pago parcial (${pago.tipo || "pago"})`
+  if (pago.completaParcial) return `Completa pago (${pago.tipo || "pago"})`
+  return pago.detalle || pago.tipo || ""
+}
+
+function comparePagosDesc(a, b) {
+  const fechaDiff = new Date(b.fecha) - new Date(a.fecha)
+  if (fechaDiff !== 0) return fechaDiff
+
+  const createdDiff = new Date(b.createdAt || b.clientCreatedAt || 0) - new Date(a.createdAt || a.clientCreatedAt || 0)
+  if (createdDiff !== 0) return createdDiff
+
+  if (a.completaParcial && !b.completaParcial) return -1
+  if (b.completaParcial && !a.completaParcial) return 1
+  if (a.esParcial && !b.esParcial) return 1
+  if (b.esParcial && !a.esParcial) return -1
+
+  return 0
+}
+
+function hasPendingPartialPayment(alumno) {
+  const ultimoPago = getUltimoPago(alumno)
+  return Boolean(ultimoPago?.esParcial && Number(ultimoPago?.saldoPendiente || 0) > 0)
+}
+
 function toggleHistory(alumnoId) {
   expandedHistory.value[alumnoId] = !expandedHistory.value[alumnoId]
 }
@@ -36,9 +78,7 @@ function getUltimosPagos(alumno, cantidad = 6) {
   if (!alumno.historialPagos || alumno.historialPagos.length === 0) {
     return []
   }
-  const pagosOrdenados = [...alumno.historialPagos].sort((a, b) => 
-    new Date(b.fecha) - new Date(a.fecha)
-  )
+  const pagosOrdenados = [...alumno.historialPagos].sort(comparePagosDesc)
   return pagosOrdenados.slice(0, cantidad)
 }
 
@@ -46,14 +86,16 @@ function getUltimoPago(alumno) {
   if (!alumno.historialPagos || alumno.historialPagos.length === 0) {
     return null
   }
-  const pagosOrdenados = [...alumno.historialPagos].sort((a, b) => 
-    new Date(b.fecha) - new Date(a.fecha)
-  )
+  const pagosOrdenados = [...alumno.historialPagos].sort(comparePagosDesc)
   return pagosOrdenados[0]
 }
 
 function getPaymentStatus(alumno) {
   const ultimoPago = getUltimoPago(alumno)
+  if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno))) {
+    return "red"
+  }
+
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
   
@@ -83,6 +125,10 @@ function formatDate(date) {
 
 function getDaysUntilPayment(alumno) {
   const ultimoPago = getUltimoPago(alumno)
+  if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno))) {
+    return null
+  }
+
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
   
@@ -165,12 +211,12 @@ function isTrainerExpanded(trainerId) {
               class="alumno-item"
             >
               <div class="alumno-details">
-                <h3>{{ alumno.nombre }} {{ alumno.apellido }}</h3>
+                <h3>{{ alumno.nombre }} {{ alumno.apellido }}<span v-if="hasPendingPartialPayment(alumno)" class="partial-indicator">*</span></h3>
                 <div class="alumno-payment-info">
                   <p v-if="alumno.celular" class="alumno-phone">📱 {{ alumno.celular }}</p>
                   <p v-if="getUltimoPago(alumno)" class="payment-info">
                     Último pago: {{ formatDate(getUltimoPago(alumno).fecha) }} 
-                    <span class="payment-type">({{ getUltimoPago(alumno).tipo }})</span>
+                    <span class="payment-type">({{ getPaymentLabel(getUltimoPago(alumno)) }})</span>
                     <span v-if="getUltimoPago(alumno).monto" class="payment-amount">
                       <span class="separator">|</span> ${{ getUltimoPago(alumno).monto }}
                     </span>
@@ -191,7 +237,7 @@ function isTrainerExpanded(trainerId) {
                     <p class="history-title">Últimos pagos:</p>
                     <div v-for="(pago, i) in getUltimosPagos(alumno)" :key="i" class="mini-history-item">
                       <span class="mini-date">{{ formatDate(pago.fecha) }}</span>
-                      <span class="mini-type">{{ pago.tipo }}</span>
+                      <span class="mini-type">{{ getPaymentLabel(pago) }}</span>
                       <span v-if="pago.membresia" class="mini-membresia">{{ pago.membresia.nombre }}</span>
                       <span v-if="pago.monto" class="mini-monto">${{ pago.monto }}</span>
                     </div>
@@ -202,13 +248,17 @@ function isTrainerExpanded(trainerId) {
                 <div 
                   :class="['status-light', getPaymentStatus(alumno)]"
                   :title="getPaymentStatus(alumno) === 'red' 
-                    ? 'Pago retrasado' 
+                  ? (hasPendingPartialPayment(alumno)
+                      ? 'Pago parcial pendiente'
+                      : (isPromisePayment(getUltimoPago(alumno)?.tipo || getUltimoPago(alumno)?.detalle) ? 'Promesa de pago pendiente' : 'Pago retrasado')) 
                     : getPaymentStatus(alumno) === 'yellow' 
                     ? `Próximo pago en ${getDaysUntilPayment(alumno)} días`
                     : 'Pago al día'"
                 ></div>
                 <span class="days-info" v-if="getPaymentStatus(alumno) !== 'green'">
-                  {{ getDaysUntilPayment(alumno) < 0 
+                  {{ getDaysUntilPayment(alumno) === null
+                    ? (hasPendingPartialPayment(alumno) ? 'Deudor *' : 'Promesa pendiente')
+                    : getDaysUntilPayment(alumno) < 0 
                     ? `${Math.abs(getDaysUntilPayment(alumno))} días de retraso`
                     : getDaysUntilPayment(alumno) === 0 ? '0 días de retraso' : `${getDaysUntilPayment(alumno)} días` }}
                 </span>
@@ -454,6 +504,13 @@ function isTrainerExpanded(trainerId) {
   font-size: 1.1rem;
   margin: 0 0 8px 0;
   font-weight: 600;
+}
+
+.partial-indicator {
+  color: #ef4444;
+  font-size: 1.1rem;
+  font-weight: 800;
+  margin-left: 6px;
 }
 
 .payment-info {

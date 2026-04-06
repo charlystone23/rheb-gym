@@ -22,19 +22,20 @@ const nuevoAlumno = ref({
   celular: "",
   fechaPago: "",
   tipoPago: "efectivo",
-  detalleOtros: "",
   membresiaId: "", // ID de la membresía seleccionada
-  descuentoActivo: false,
   montoDescuento: "",
-  promesaDePago: false
+  medioDescuento: "transferencia"
 })
 const nuevoPago = ref({
   fechaPago: "",
   tipoPago: "efectivo",
-  detalleOtros: "",
   membresiaId: "",
-  descuentoActivo: false,
-  montoDescuento: ""
+  montoDescuento: "",
+  medioDescuento: "transferencia",
+  pagoSimilar: false,
+  montoSimilar: "",
+  pagoParcial: false,
+  montoParcial: ""
 })
 const membresias = ref([])
 const error = ref("")
@@ -47,6 +48,124 @@ const isLoadingTrainers = ref(false)
 const isLoading = ref(false)
 
 const currentUser = ref(null)
+const searchQuery = ref("")
+const sortOrder = ref("az")
+
+function normalizePaymentType(tipo) {
+  const normalized = String(tipo || "").trim().toLowerCase()
+
+  if (normalized === "promesa de pago" || normalized === "promesa_pago") return "promesa de pago"
+  if (normalized === "descuento") return "descuento"
+  if (normalized === "efectivo") return "efectivo"
+  if (normalized === "transferencia") return "transferencia"
+
+  return normalized
+}
+
+function isPromisePayment(tipo) {
+  return normalizePaymentType(tipo) === "promesa de pago"
+}
+
+function isDiscountPayment(tipo) {
+  return normalizePaymentType(tipo) === "descuento"
+}
+
+function getPaymentLabel(pago) {
+  if (!pago) return ""
+  if (pago.esParcial) return `Pago parcial (${pago.tipo || "pago"})`
+  if (pago.completaParcial) return `Completa pago (${pago.tipo || "pago"})`
+  return pago.detalle || pago.tipo || ""
+}
+
+function getPaymentAmount(pago) {
+  if (!pago) return 0
+  if (typeof pago.monto === "number") return pago.monto
+  return Number(pago.monto || pago.membresia?.precio || 0)
+}
+
+function hasPendingPartialPayment(alumno) {
+  const ultimoPago = getUltimoPago(alumno)
+  return Boolean(ultimoPago?.esParcial && Number(ultimoPago?.saldoPendiente || 0) > 0)
+}
+
+function getPendingPartialAmount(alumno) {
+  const ultimoPago = getUltimoPago(alumno)
+  if (!ultimoPago?.esParcial) return 0
+  return Number(ultimoPago.saldoPendiente || 0)
+}
+
+function shouldShowCustomAmountForPayment() {
+  return nuevoPago.value.pagoSimilar || isDiscountPayment(nuevoPago.value.tipoPago) || hasPendingPartialPayment(alumnoSeleccionado.value)
+}
+
+function applySimilarPaymentFromLast(alumno) {
+  const ultimoPago = getUltimoPago(alumno)
+  if (!ultimoPago) return
+
+  const tipoNormalizado = normalizePaymentType(ultimoPago.tipo || ultimoPago.detalle)
+  const membresiaId = ultimoPago.membresia?.id || ultimoPago.membresia?._id || nuevoPago.value.membresiaId
+
+  nuevoPago.value.tipoPago = tipoNormalizado || "efectivo"
+  nuevoPago.value.membresiaId = membresiaId || nuevoPago.value.membresiaId
+  nuevoPago.value.montoSimilar = String(getPaymentAmount(ultimoPago))
+  nuevoPago.value.medioDescuento = ultimoPago.medio || "transferencia"
+}
+
+function handlePagoSimilarChange() {
+  if (!nuevoPago.value.pagoSimilar) {
+    nuevoPago.value.montoSimilar = ""
+    if (isDiscountPayment(nuevoPago.value.tipoPago)) {
+      nuevoPago.value.medioDescuento = nuevoPago.value.medioDescuento || "transferencia"
+    }
+    return
+  }
+
+  if (alumnoSeleccionado.value) {
+    applySimilarPaymentFromLast(alumnoSeleccionado.value)
+  }
+}
+
+function getBaseAmountForCurrentPayment(selectedM, alumno) {
+  if (hasPendingPartialPayment(alumno)) {
+    return getPendingPartialAmount(alumno)
+  }
+
+  if (nuevoPago.value.pagoSimilar && nuevoPago.value.montoSimilar !== "" && !isNaN(Number(nuevoPago.value.montoSimilar))) {
+    return Number(nuevoPago.value.montoSimilar)
+  }
+
+  if (isDiscountPayment(nuevoPago.value.tipoPago) && nuevoPago.value.montoDescuento !== "" && !isNaN(Number(nuevoPago.value.montoDescuento))) {
+    return Number(nuevoPago.value.montoDescuento)
+  }
+
+  return selectedM ? selectedM.precio : 0
+}
+
+const filteredAlumnos = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+
+  let result = [...alumnos.value]
+
+  if (query) {
+    result = result.filter((alumno) => {
+      const fullName = `${alumno.nombre || ""} ${alumno.apellido || ""}`.toLowerCase()
+      const nombre = String(alumno.nombre || "").toLowerCase()
+      const apellido = String(alumno.apellido || "").toLowerCase()
+
+      return fullName.includes(query) || nombre.includes(query) || apellido.includes(query)
+    })
+  }
+
+  result.sort((a, b) => {
+    const nameA = `${a.apellido || ""} ${a.nombre || ""}`.trim().toLowerCase()
+    const nameB = `${b.apellido || ""} ${b.nombre || ""}`.trim().toLowerCase()
+    return sortOrder.value === "za"
+      ? nameB.localeCompare(nameA, "es")
+      : nameA.localeCompare(nameB, "es")
+  })
+
+  return result
+})
 
 onMounted(async () => {
   try {
@@ -82,14 +201,27 @@ onMounted(async () => {
   }
 })
 
+function comparePagosDesc(a, b) {
+  const fechaDiff = new Date(b.fecha) - new Date(a.fecha)
+  if (fechaDiff !== 0) return fechaDiff
+
+  const createdDiff = new Date(b.createdAt || b.clientCreatedAt || 0) - new Date(a.createdAt || a.clientCreatedAt || 0)
+  if (createdDiff !== 0) return createdDiff
+
+  if (a.completaParcial && !b.completaParcial) return -1
+  if (b.completaParcial && !a.completaParcial) return 1
+  if (a.esParcial && !b.esParcial) return 1
+  if (b.esParcial && !a.esParcial) return -1
+
+  return 0
+}
+
 function getUltimoPago(alumno) {
   if (!alumno.historialPagos || alumno.historialPagos.length === 0) {
     return null
   }
   // Ordenar por fecha descendente y tomar el más reciente
-  const pagosOrdenados = [...alumno.historialPagos].sort((a, b) => 
-    new Date(b.fecha) - new Date(a.fecha)
-  )
+  const pagosOrdenados = [...alumno.historialPagos].sort(comparePagosDesc)
   return pagosOrdenados[0]
 }
 
@@ -98,9 +230,7 @@ function getUltimosPagos(alumno, cantidad = 6) {
     return []
   }
   // Ordenar por fecha descendente y tomar los últimos N
-  const pagosOrdenados = [...alumno.historialPagos].sort((a, b) => 
-    new Date(b.fecha) - new Date(a.fecha)
-  )
+  const pagosOrdenados = [...alumno.historialPagos].sort(comparePagosDesc)
   return pagosOrdenados.slice(0, cantidad)
 }
 
@@ -114,6 +244,10 @@ function isHistorialVisible(alumnoId) {
 
 function getPaymentStatus(alumno) {
   const ultimoPago = getUltimoPago(alumno)
+  if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno))) {
+    return "red"
+  }
+
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
   
@@ -144,6 +278,8 @@ function formatDate(date) {
 function formatNextPaymentDate(alumno) {
   const ultimoPago = getUltimoPago(alumno)
   if (!ultimoPago) return "Sin pago"
+  if (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle)) return "Promesa pendiente"
+  if (hasPendingPartialPayment(alumno)) return "Pago parcial pendiente"
   
   const fechaPago = new Date(ultimoPago.fecha)
   const proximaFecha = new Date(fechaPago)
@@ -156,6 +292,10 @@ function formatNextPaymentDate(alumno) {
 
 function getDaysUntilPayment(alumno) {
   const ultimoPago = getUltimoPago(alumno)
+  if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno))) {
+    return null
+  }
+
   const hoy = new Date()
   hoy.setHours(0, 0, 0, 0)
   
@@ -186,11 +326,9 @@ function openModal() {
     celular: "",
     fechaPago: "", // Not used for editing but needed for object structure if any
     tipoPago: "efectivo",
-    detalleOtros: "",
     membresiaId: membresias.value.find(m => m.nombre.includes('3 días'))?._id || membresias.value[0]?._id || "",
-    descuentoActivo: false,
     montoDescuento: "",
-    promesaDePago: false
+    medioDescuento: "transferencia",
   }
 }
 
@@ -218,11 +356,8 @@ function closeModal() {
     celular: "",
     fechaPago: "",
     tipoPago: "efectivo",
-    detalleOtros: "",
     membresiaId: membresias.value.find(m => m.nombre.includes('3 días'))?._id || membresias.value[0]?._id || "",
-    descuentoActivo: false,
     montoDescuento: "",
-    promesaDePago: false
   }
 }
 
@@ -306,27 +441,28 @@ async function agregarAlumno() {
   const selectedM = membresias.value.find(m => m._id === nuevoAlumno.value.membresiaId)
   
   let montoCalculado = selectedM ? selectedM.precio : 0
-  if (nuevoAlumno.value.tipoPago === 'otros' && nuevoAlumno.value.descuentoActivo) {
+  if (isDiscountPayment(nuevoAlumno.value.tipoPago)) {
     if (nuevoAlumno.value.montoDescuento !== "" && !isNaN(Number(nuevoAlumno.value.montoDescuento))) {
       montoCalculado = Number(nuevoAlumno.value.montoDescuento)
     }
   }
 
-  let historial = []
-  if (!nuevoAlumno.value.promesaDePago) {
-    historial = [{
-      fecha: fechaPagoDate,
-      tipo: nuevoAlumno.value.tipoPago === 'otros' 
-        ? (nuevoAlumno.value.detalleOtros.trim() || 'otros')
-        : nuevoAlumno.value.tipoPago,
-      membresia: selectedM ? {
-        id: selectedM._id,
-        nombre: selectedM.nombre,
-        precio: selectedM.precio
-      } : null,
-      monto: montoCalculado
-    }]
-  }
+  const historial = [{
+    fecha: fechaPagoDate,
+    tipo: isPromisePayment(nuevoAlumno.value.tipoPago) ? "promesa de pago" : nuevoAlumno.value.tipoPago,
+    detalle: isPromisePayment(nuevoAlumno.value.tipoPago)
+      ? "Promesa de Pago"
+      : isDiscountPayment(nuevoAlumno.value.tipoPago)
+        ? "Descuento"
+        : "",
+    medio: isDiscountPayment(nuevoAlumno.value.tipoPago) ? nuevoAlumno.value.medioDescuento : "",
+    membresia: selectedM ? {
+      id: selectedM._id,
+      nombre: selectedM.nombre,
+      precio: selectedM.precio
+    } : null,
+    monto: isPromisePayment(nuevoAlumno.value.tipoPago) ? 0 : montoCalculado
+  }]
 
   const alumnoData = {
     nombre: nuevoAlumno.value.nombre.trim(),
@@ -374,12 +510,23 @@ function openPaymentModal(alumno) {
   }
   
   nuevoPago.value = {
-    fechaPago: "",
+    fechaPago: formatDateAR(new Date()),
     tipoPago: "efectivo",
-    detalleOtros: "",
     membresiaId: defaultMembresiaId,
-    descuentoActivo: false,
-    montoDescuento: ""
+    montoDescuento: "",
+    medioDescuento: "transferencia",
+    pagoSimilar: false,
+    montoSimilar: "",
+    pagoParcial: false,
+    montoParcial: ""
+  }
+
+  if (hasPendingPartialPayment(alumno)) {
+    const ultimoPago = getUltimoPago(alumno)
+    nuevoPago.value.tipoPago = normalizePaymentType(ultimoPago.tipo || ultimoPago.detalle) || "efectivo"
+    nuevoPago.value.membresiaId = ultimoPago.membresia?.id || ultimoPago.membresia?._id || defaultMembresiaId
+    nuevoPago.value.montoSimilar = String(getPendingPartialAmount(alumno))
+    nuevoPago.value.medioDescuento = ultimoPago.medio || "transferencia"
   }
 }
 
@@ -390,10 +537,13 @@ function closePaymentModal() {
   nuevoPago.value = {
     fechaPago: "",
     tipoPago: "efectivo",
-    detalleOtros: "",
     membresiaId: "",
-    descuentoActivo: false,
-    montoDescuento: ""
+    montoDescuento: "",
+    medioDescuento: "transferencia",
+    pagoSimilar: false,
+    montoSimilar: "",
+    pagoParcial: false,
+    montoParcial: ""
   }
 }
 
@@ -436,33 +586,69 @@ async function registrarPago() {
   if (alumnoIndex === -1) return
   
   // Crear nuevo pago
-  let tipoFinal = nuevoPago.value.tipoPago
-  if (nuevoPago.value.tipoPago === 'otros') {
-    if (!nuevoPago.value.detalleOtros.trim()) {
-      error.value = "Debes especificar el detalle para 'Otros'"
-      return
-    }
-    tipoFinal = nuevoPago.value.detalleOtros.trim() || 'otros'
-  }
+  const tipoFinal = nuevoPago.value.tipoPago
   
   const selectedM = membresias.value.find(m => m._id === nuevoPago.value.membresiaId)
+  const hadPendingPartial = hasPendingPartialPayment(alumnoSeleccionado.value)
+  const ultimoPago = getUltimoPago(alumnoSeleccionado.value)
+  const montoBase = getBaseAmountForCurrentPayment(selectedM, alumnoSeleccionado.value)
+  let montoCalculado = montoBase
 
-  let montoCalculado = selectedM ? selectedM.precio : 0
-  if (nuevoPago.value.tipoPago === 'otros' && nuevoPago.value.descuentoActivo) {
-    if (nuevoPago.value.montoDescuento !== "" && !isNaN(Number(nuevoPago.value.montoDescuento))) {
-      montoCalculado = Number(nuevoPago.value.montoDescuento)
+  if (nuevoPago.value.pagoParcial) {
+    if (isPromisePayment(tipoFinal)) {
+      error.value = "No podés registrar una promesa de pago como pago parcial."
+      return
     }
+
+    if (nuevoPago.value.montoParcial === "" || isNaN(Number(nuevoPago.value.montoParcial))) {
+      error.value = "Ingresá el monto abonado en esta parte del pago."
+      return
+    }
+
+    const montoParcial = Number(nuevoPago.value.montoParcial)
+    if (montoParcial <= 0) {
+      error.value = "El monto parcial debe ser mayor a cero."
+      return
+    }
+
+    if (montoParcial > montoBase) {
+      error.value = "El monto parcial no puede superar el total pendiente."
+      return
+    }
+
+    montoCalculado = montoParcial
   }
+
+  const completaConMontoExacto = nuevoPago.value.pagoParcial && montoCalculado === montoBase
 
   const nuevoPagoObj = {
     fecha: fechaPagoDate,
-    tipo: tipoFinal,
+    tipo: isPromisePayment(tipoFinal) ? "promesa de pago" : tipoFinal,
+    detalle: completaConMontoExacto
+      ? "Completa pago parcial"
+      : nuevoPago.value.pagoParcial
+      ? "Pago parcial"
+      : hadPendingPartial
+        ? "Completa pago parcial"
+        : isPromisePayment(tipoFinal)
+      ? "Promesa de Pago"
+      : isDiscountPayment(tipoFinal)
+        ? "Descuento"
+        : "",
+    medio: isDiscountPayment(tipoFinal) ? nuevoPago.value.medioDescuento : "",
+    esParcial: nuevoPago.value.pagoParcial && !completaConMontoExacto,
+    completaParcial: completaConMontoExacto || (!nuevoPago.value.pagoParcial && hadPendingPartial),
+    montoObjetivo: nuevoPago.value.pagoParcial && !completaConMontoExacto
+      ? (hadPendingPartial ? Number(ultimoPago?.montoObjetivo || montoBase + montoCalculado) : montoBase)
+      : (hadPendingPartial ? Number(ultimoPago?.montoObjetivo || montoBase) : null),
+    saldoPendiente: nuevoPago.value.pagoParcial && !completaConMontoExacto ? Number((montoBase - montoCalculado).toFixed(2)) : 0,
+    clientCreatedAt: new Date().toISOString(),
     membresia: selectedM ? {
       id: selectedM._id,
       nombre: selectedM.nombre,
       precio: selectedM.precio
     } : null,
-    monto: montoCalculado
+    monto: isPromisePayment(tipoFinal) ? 0 : montoCalculado
   }
   
   try {
@@ -477,9 +663,7 @@ async function registrarPago() {
     alumnos.value[alumnoIndex].historialPagos.push(nuevoPagoObj)
     
     // Sorting for display
-    alumnos.value[alumnoIndex].historialPagos.sort((a, b) => 
-      new Date(b.fecha) - new Date(a.fecha)
-    )
+    alumnos.value[alumnoIndex].historialPagos.sort(comparePagosDesc)
     
     // Do not truncate local history, let the view helper handle it
     
@@ -612,21 +796,46 @@ async function confirmarDelegacion() {
         </div>
       </div>
 
+      <div class="filters-bar">
+        <div class="filter-group search-group">
+          <label for="alumnoSearch">Buscar alumno</label>
+          <input
+            id="alumnoSearch"
+            v-model="searchQuery"
+            type="text"
+            class="search-input"
+            placeholder="Buscar por nombre o apellido"
+          />
+        </div>
+
+        <div class="filter-group order-group">
+          <label for="alumnoOrder">Orden</label>
+          <select id="alumnoOrder" v-model="sortOrder" class="select-input">
+            <option value="az">Alfabético A-Z</option>
+            <option value="za">Alfabético Z-A</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="results-summary">
+        Mostrando {{ filteredAlumnos.length }} de {{ alumnos.length }} alumno(s)
+      </div>
+
       <div class="alumnos-list">
         <div 
-          v-for="alumno in alumnos" 
+          v-for="alumno in filteredAlumnos" 
           :key="alumno.id" 
           class="alumno-card"
         >
           <div class="alumno-info">
             <div class="alumno-name">
-              <h3>{{ alumno.nombre }} {{ alumno.apellido }}</h3>
+              <h3>{{ alumno.nombre }} {{ alumno.apellido }}<span v-if="hasPendingPartialPayment(alumno)" class="partial-indicator">*</span></h3>
             </div>
             <div class="alumno-payment">
               <p class="payment-label">Último pago:</p>
               <p class="payment-date" v-if="getUltimoPago(alumno)">
                 {{ formatDate(getUltimoPago(alumno).fecha) }} 
-                <span class="payment-type">({{ getUltimoPago(alumno).tipo }})</span>
+                <span class="payment-type">({{ getPaymentLabel(getUltimoPago(alumno)) }})</span>
                 <span v-if="getUltimoPago(alumno).membresia" class="membership-info-chip">
                   {{ getUltimoPago(alumno).membresia.nombre }} - ${{ (getUltimoPago(alumno).monto ?? getUltimoPago(alumno).membresia.precio).toLocaleString() }}
                 </span>
@@ -635,6 +844,9 @@ async function confirmarDelegacion() {
               <p class="next-payment">Próximo pago: {{ formatNextPaymentDate(alumno) }}</p>
               
               <!-- Botón para ver historial -->
+              <p v-if="hasPendingPartialPayment(alumno)" class="partial-summary">
+                Saldo pendiente: ${{ getPendingPartialAmount(alumno).toLocaleString() }} *
+              </p>
               <button 
                 v-if="getUltimosPagos(alumno).length > 0"
                 @click="toggleHistorial(alumno.id)" 
@@ -657,7 +869,7 @@ async function confirmarDelegacion() {
                   class="history-item"
                 >
                   <span class="history-date">{{ formatDate(pago.fecha) }}</span>
-                  <span class="history-type">{{ pago.tipo }}</span>
+                  <span class="history-type">{{ getPaymentLabel(pago) }}</span>
                   <span v-if="pago.membresia" class="history-membresia">
                     {{ pago.membresia.nombre }} (${{ (pago.monto ?? pago.membresia.precio).toLocaleString() }})
                   </span>
@@ -670,19 +882,23 @@ async function confirmarDelegacion() {
               <div 
                 :class="['status-light', getPaymentStatus(alumno)]"
                 :title="getPaymentStatus(alumno) === 'red' 
-                  ? 'Pago retrasado' 
+                  ? (hasPendingPartialPayment(alumno)
+                      ? 'Pago parcial pendiente'
+                      : (isPromisePayment(getUltimoPago(alumno)?.tipo || getUltimoPago(alumno)?.detalle) ? 'Promesa de pago pendiente' : 'Pago retrasado')) 
                   : getPaymentStatus(alumno) === 'yellow' 
                   ? `Próximo pago en ${getDaysUntilPayment(alumno)} días`
                   : 'Pago al día'"
               ></div>
               <span class="days-info" v-if="getPaymentStatus(alumno) !== 'green'">
-                {{ getDaysUntilPayment(alumno) < 0 
+                {{ getDaysUntilPayment(alumno) === null
+                  ? (hasPendingPartialPayment(alumno) ? 'Deudor *' : 'Promesa pendiente')
+                  : getDaysUntilPayment(alumno) < 0 
                   ? `${Math.abs(getDaysUntilPayment(alumno))} días de retraso`
                   : getDaysUntilPayment(alumno) === 0 ? '0 días de retraso' : `${getDaysUntilPayment(alumno)} días` }}
               </span>
             </div>
             <button @click="openPaymentModal(alumno)" class="register-payment-button">
-              Registrar Pago
+              {{ hasPendingPartialPayment(alumno) ? 'Completar Pago' : 'Registrar Pago' }}
             </button>
             <div class="action-buttons-group">
             <button 
@@ -796,44 +1012,24 @@ async function confirmarDelegacion() {
             >
               <option value="efectivo">Efectivo</option>
               <option value="transferencia">Transferencia</option>
-              <option value="otros">Otros</option>
+              <option value="descuento">Descuento</option>
+              <option value="promesa de pago">Promesa de Pago</option>
             </select>
           </div>
 
-          <div class="form-group" v-if="nuevoAlumno.tipoPago === 'otros'">
-            <label for="detalleOtrosNuevo">Detalle *</label>
-            <input
-              id="detalleOtrosNuevo"
-              v-model="nuevoAlumno.detalleOtros"
-              type="text"
-              placeholder="Especifica el tipo de pago"
-              required
-            />
+          <div class="form-group" v-if="isDiscountPayment(nuevoAlumno.tipoPago)">
+            <label for="medioDescuentoNuevo">Medio del Descuento *</label>
+            <select
+              id="medioDescuentoNuevo"
+              v-model="nuevoAlumno.medioDescuento"
+              class="select-input"
+            >
+              <option value="transferencia">Transferencia</option>
+              <option value="efectivo">Efectivo</option>
+            </select>
           </div>
 
-          <div class="form-group checkbox-group" v-if="nuevoAlumno.tipoPago === 'otros'">
-            <label class="checkbox-label">
-              <input
-                type="checkbox"
-                v-model="nuevoAlumno.promesaDePago"
-                @change="() => { if(nuevoAlumno.promesaDePago) { nuevoAlumno.detalleOtros = 'Promesa de Pago'; nuevoAlumno.descuentoActivo = false; } }"
-              />
-              Promesa de Pago
-            </label>
-          </div>
-
-          <div class="form-group checkbox-group" v-if="nuevoAlumno.tipoPago === 'otros' && !nuevoAlumno.promesaDePago">
-            <label class="checkbox-label">
-              <input
-                type="checkbox"
-                v-model="nuevoAlumno.descuentoActivo"
-                @change="() => { if(nuevoAlumno.descuentoActivo) nuevoAlumno.detalleOtros = 'Descuento' }"
-              />
-              Aplicar Descuento
-            </label>
-          </div>
-
-          <div class="form-group" v-if="nuevoAlumno.tipoPago === 'otros' && nuevoAlumno.descuentoActivo && !nuevoAlumno.promesaDePago">
+          <div class="form-group" v-if="isDiscountPayment(nuevoAlumno.tipoPago)">
             <label for="montoDescuentoNuevo">Monto (Final) *</label>
             <input
               id="montoDescuentoNuevo"
@@ -880,7 +1076,7 @@ async function confirmarDelegacion() {
     <div v-if="showPaymentModal && alumnoSeleccionado" class="modal-overlay" @click.self="closePaymentModal">
       <div class="modal-content">
         <div class="modal-header">
-          <h2>Registrar Pago</h2>
+          <h2>{{ hasPendingPartialPayment(alumnoSeleccionado) ? 'Completar Pago' : 'Registrar Pago' }}</h2>
           <button @click="closePaymentModal" class="close-button">×</button>
         </div>
         
@@ -899,6 +1095,31 @@ async function confirmarDelegacion() {
             />
           </div>
 
+          <div class="form-group checkbox-group">
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                v-model="nuevoPago.pagoSimilar"
+                :disabled="!getUltimoPago(alumnoSeleccionado)"
+                @change="handlePagoSimilarChange"
+              />
+              Pago recurrente
+            </label>
+            <span v-if="!getUltimoPago(alumnoSeleccionado)" class="checkbox-help">
+              Disponible cuando el alumno ya tiene un pago previo.
+            </span>
+          </div>
+
+          <div class="form-group checkbox-group" v-if="!isPromisePayment(nuevoPago.tipoPago)">
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                v-model="nuevoPago.pagoParcial"
+              />
+              Registrar pago por partes
+            </label>
+          </div>
+
           <div class="form-group">
             <label for="tipoPago">Tipo de Pago *</label>
             <select
@@ -909,8 +1130,35 @@ async function confirmarDelegacion() {
             >
               <option value="efectivo">Efectivo</option>
               <option value="transferencia">Transferencia</option>
-              <option value="otros">Otros</option>
+              <option value="descuento">Descuento</option>
+              <option value="promesa de pago">Promesa de Pago</option>
             </select>
+          </div>
+
+          <div class="form-group" v-if="nuevoPago.pagoSimilar">
+            <label for="montoSimilarPago">Monto del Pago *</label>
+            <input
+              id="montoSimilarPago"
+              v-model="nuevoPago.montoSimilar"
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="Monto del último pago"
+              required
+            />
+          </div>
+
+          <div class="form-group" v-if="nuevoPago.pagoParcial">
+            <label for="montoParcialPago">Monto abonado en esta parte *</label>
+            <input
+              id="montoParcialPago"
+              v-model="nuevoPago.montoParcial"
+              type="number"
+              min="0"
+              step="0.01"
+              :placeholder="hasPendingPartialPayment(alumnoSeleccionado) ? 'Monto a completar parcialmente' : 'Monto abonado ahora'"
+              required
+            />
           </div>
 
           <div class="form-group">
@@ -927,29 +1175,19 @@ async function confirmarDelegacion() {
             </select>
           </div>
 
-          <div class="form-group" v-if="nuevoPago.tipoPago === 'otros'">
-            <label for="detalleOtros">Detalle *</label>
-            <input
-              id="detalleOtros"
-              v-model="nuevoPago.detalleOtros"
-              type="text"
-              placeholder="Especifica el tipo de pago"
-              required
-            />
+          <div class="form-group" v-if="isDiscountPayment(nuevoPago.tipoPago)">
+            <label for="medioDescuentoPago">Medio del Descuento *</label>
+            <select
+              id="medioDescuentoPago"
+              v-model="nuevoPago.medioDescuento"
+              class="select-input"
+            >
+              <option value="transferencia">Transferencia</option>
+              <option value="efectivo">Efectivo</option>
+            </select>
           </div>
 
-          <div class="form-group checkbox-group" v-if="nuevoPago.tipoPago === 'otros'">
-            <label class="checkbox-label">
-              <input
-                type="checkbox"
-                v-model="nuevoPago.descuentoActivo"
-                @change="() => { if(nuevoPago.descuentoActivo) nuevoPago.detalleOtros = 'Descuento' }"
-              />
-              Aplicar Descuento
-            </label>
-          </div>
-
-          <div class="form-group" v-if="nuevoPago.tipoPago === 'otros' && nuevoPago.descuentoActivo">
+          <div class="form-group" v-if="isDiscountPayment(nuevoPago.tipoPago) && !nuevoPago.pagoSimilar">
             <label for="montoDescuentoPago">Monto (Final) *</label>
             <input
               id="montoDescuentoPago"
@@ -970,7 +1208,7 @@ async function confirmarDelegacion() {
               Cancelar
             </button>
             <button type="submit" class="submit-button">
-              Registrar Pago
+              {{ hasPendingPartialPayment(alumnoSeleccionado) ? 'Completar Pago' : 'Registrar Pago' }}
             </button>
           </div>
         </form>
@@ -1126,6 +1364,56 @@ async function confirmarDelegacion() {
   border: 2px solid var(--rheb-primary-green);
 }
 
+.filters-bar {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  background: var(--card-bg);
+  border-radius: 14px;
+  padding: 18px;
+  border: 2px solid var(--card-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filter-group label {
+  color: var(--header-text);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.search-input {
+  width: 100%;
+  min-height: 46px;
+  padding: 12px 14px;
+  border: 2px solid var(--input-border);
+  border-radius: 10px;
+  background: var(--input-bg);
+  color: var(--header-text);
+  font-size: 0.95rem;
+  box-sizing: border-box;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: var(--rheb-primary-green);
+  box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.15);
+}
+
+.results-summary {
+  color: var(--subtitle-text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-top: -6px;
+}
+
 .legend-item {
   display: flex;
   align-items: center;
@@ -1189,6 +1477,13 @@ async function confirmarDelegacion() {
   font-weight: 600;
 }
 
+.partial-indicator {
+  color: #ef4444;
+  font-size: 1.2rem;
+  font-weight: 800;
+  margin-left: 6px;
+}
+
 .alumno-payment {
   display: flex;
   flex-direction: column;
@@ -1220,6 +1515,13 @@ async function confirmarDelegacion() {
 .next-payment {
   color: var(--subtitle-text);
   font-size: 0.85rem;
+  margin: 4px 0 0 0;
+}
+
+.partial-summary {
+  color: #b91c1c;
+  font-size: 0.85rem;
+  font-weight: 700;
   margin: 4px 0 0 0;
 }
 
@@ -1740,6 +2042,13 @@ async function confirmarDelegacion() {
   cursor: pointer;
 }
 
+.checkbox-help {
+  color: var(--subtitle-text);
+  font-size: 0.82rem;
+  font-weight: 500;
+  margin-left: 30px;
+}
+
 .checkbox-label input[type="checkbox"] {
   /* Override general .form-group input styles */
   -webkit-appearance: auto !important;
@@ -1833,6 +2142,11 @@ async function confirmarDelegacion() {
   
   .add-button {
     padding: 12px 24px;
+  }
+
+  .filters-bar {
+    grid-template-columns: minmax(0, 1fr) 220px;
+    align-items: end;
   }
 }
 </style>

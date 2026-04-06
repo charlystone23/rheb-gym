@@ -6,6 +6,7 @@ import Alumnos from "../views/Alumnos.vue"
 import AdminAlumnos from "../views/AdminAlumnos.vue"
 import AdminUsers from "../views/AdminUsers.vue"
 import AdminStats from "../views/AdminStats.vue"
+import AdminExpenses from "../views/AdminExpenses.vue"
 import AdminMemberships from "../views/AdminMemberships.vue"
 import AdminConfig from "../views/AdminConfig.vue"
 import AdminSales from "../views/AdminSales.vue"
@@ -46,6 +47,11 @@ const routes = [
   {
     path: "/admin/stats",
     component: AdminStats,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: "/admin/expenses",
+    component: AdminExpenses,
     meta: { requiresAuth: true, requiresAdmin: true }
   },
   {

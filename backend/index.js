@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config({ quiet: true });
 const Product = require('./models/Product');
+const Expense = require('./models/Expense');
 
 const Sale = require('./models/Sale');
 const StockLog = require('./models/StockLog');
@@ -99,14 +100,20 @@ const HorarioSchema = new mongoose.Schema({
 
 const PagoSchema = new mongoose.Schema({
     fecha: { type: Date, required: true },
-    tipo: { type: String, required: true }, // 'efectivo', 'transferencia', 'otros'
+    tipo: { type: String, required: true }, // 'efectivo', 'transferencia', 'descuento', 'promesa de pago'
+    detalle: { type: String, default: "" },
+    medio: { type: String, default: "" },
+    esParcial: { type: Boolean, default: false },
+    completaParcial: { type: Boolean, default: false },
+    montoObjetivo: { type: Number, default: null },
+    saldoPendiente: { type: Number, default: 0 },
     membresia: {
         id: { type: mongoose.Schema.Types.ObjectId, ref: 'Membresia' },
         nombre: { type: String },
         precio: { type: Number }
     },
     monto: { type: Number }
-});
+}, { timestamps: true });
 
 const AlumnoSchema = new mongoose.Schema({
     nombre: { type: String, required: true },
@@ -753,6 +760,61 @@ app.post('/api/alumnos/:id/pagos', async (req, res) => {
         if (!alumno) return res.status(404).json({ error: 'Alumno no encontrado' });
 
         res.json(alumno);
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// --- EXPENSE ROUTES ---
+
+app.get('/api/expenses', async (req, res) => {
+    try {
+        const filter = {};
+        const month = Number(req.query.month);
+        const year = Number(req.query.year);
+
+        if (Number.isInteger(month) && Number.isInteger(year) && month >= 1 && month <= 12) {
+            const start = new Date(year, month - 1, 1);
+            const end = new Date(year, month, 1);
+
+            filter.fecha = {
+                $gte: start,
+                $lt: end
+            };
+        }
+
+        const expenses = await Expense.find(filter).sort({ fecha: -1, createdAt: -1 });
+        res.json(expenses);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/expenses', async (req, res) => {
+    try {
+        const { detalle, monto, fecha } = req.body;
+
+        const newExpense = new Expense({
+            detalle,
+            monto,
+            fecha
+        });
+
+        const savedExpense = await newExpense.save();
+        res.status(201).json(savedExpense);
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+app.delete('/api/expenses/:id', async (req, res) => {
+    try {
+        const deletedExpense = await Expense.findByIdAndDelete(req.params.id);
+        if (!deletedExpense) {
+            return res.status(404).json({ error: 'Gasto no encontrado' });
+        }
+
+        res.json({ message: 'Gasto eliminado correctamente' });
     } catch (err) {
         res.status(400).json({ error: err.message });
     }
