@@ -11,7 +11,8 @@ const StockLog = require('./models/StockLog');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+console.log('--- Servidor Iniciando ---');
+console.log('Origin permitido:', process.env.FRONTEND_URL || 'No definido');
 const allowedOrigins = [
     process.env.FRONTEND_URL,
     process.env.FRONTEND_URL_2,
