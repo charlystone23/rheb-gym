@@ -13,26 +13,35 @@ const PORT = process.env.PORT || 3000;
 
 console.log('--- Servidor Iniciando ---');
 console.log('Origin permitido:', process.env.FRONTEND_URL || 'No definido');
+// Middleware
 const allowedOrigins = [
     process.env.FRONTEND_URL,
     process.env.FRONTEND_URL_2,
     'https://rheb-app.netlify.app',
-    'https://rheb-app.netlify.app/',
     'http://localhost:5173',
     'http://localhost:4173',
     'http://localhost:3000'
-].filter(Boolean);
+].filter(Boolean).map(url => url.trim().replace(/\/$/, "")); // Quitar espacios y barra final si existe
 
 const corsOptions = {
     origin: function (origin, callback) {
-        // Permitir peticiones sin origen (como herramientas de test o server-to-server)
+        // Permitir solicitudes sin origin (como herramientas de test local o server-to-server)
         if (!origin) return callback(null, true);
-        
-        if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes(origin)) {
+
+        // Limpiar el origen recibido omitiendo la barra final para comparar
+        const cleanOrigin = origin.trim().replace(/\/$/, "");
+
+        console.log('--- CORS Check ---');
+        console.log('Recibido:', origin);
+        console.log('Limpio:', cleanOrigin);
+        console.log('Válidos:', allowedOrigins);
+
+        if (allowedOrigins.includes(cleanOrigin)) {
+            console.log('CORS Aceptado');
             callback(null, true);
         } else {
-            console.warn('CORS bloqueado para el origen:', origin);
-            callback(null, false); // No tirar error, solo denegar
+            console.warn('CORS Denegado para:', origin);
+            callback(null, false);
         }
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
