@@ -9,6 +9,7 @@ const router = useRouter()
 const entrenadores = ref([])
 const isLoading = ref(false)
 const error = ref("")
+const currentUser = ref(null)
 const expandedTrainers = ref({})
 const expandedHistory = ref({})
 const membresias = ref([])
@@ -82,8 +83,10 @@ function isHistoryExpanded(alumnoId) {
 onMounted(async () => {
   try {
     isLoading.value = true
+    const userStr = localStorage.getItem("user")
+    currentUser.value = userStr ? JSON.parse(userStr) : null
     const [data, memberships] = await Promise.all([
-      MongoService.getEntrenadores(),
+      MongoService.getEntrenadores(true),
       MongoService.getMembresias()
     ])
     entrenadores.value = data || []
@@ -181,6 +184,37 @@ function isTrainerExpanded(trainerId) {
 
 function getAlumnoId(alumno) {
   return alumno?._id || alumno?.id || ""
+}
+
+function getActiveAlumnos(entrenador) {
+  return (entrenador.alumnos || []).filter((alumno) => alumno.estado !== "inactivo")
+}
+
+function getInactiveAlumnos(entrenador) {
+  return (entrenador.alumnos || []).filter((alumno) => alumno.estado === "inactivo")
+}
+
+async function reactivarAlumno(entrenador, alumno) {
+  try {
+    error.value = ""
+    const alumnoActualizado = await MongoService.reactivarAlumno(getAlumnoId(alumno), currentUser.value)
+
+    entrenadores.value = entrenadores.value.map((item) => {
+      if (item._id !== entrenador._id) return item
+
+      return {
+        ...item,
+        alumnos: (item.alumnos || []).map((existingAlumno) =>
+          getAlumnoId(existingAlumno) === getAlumnoId(alumno)
+            ? alumnoActualizado
+            : existingAlumno
+        )
+      }
+    })
+  } catch (e) {
+    console.error("Error reactivating alumno:", e)
+    error.value = e.message || "No se pudo reactivar el alumno."
+  }
 }
 
 function closeEditPaymentModal() {
@@ -352,7 +386,7 @@ async function guardarPagoEditado() {
             <div class="entrenador-info">
               <h2>{{ entrenador.nombre }} {{ entrenador.apellido }}</h2>
               <p class="entrenador-email">{{ entrenador.username }}</p>
-              <p class="alumnos-count">{{ entrenador.alumnos.length }} alumno(s)</p>
+              <p class="alumnos-count">{{ getActiveAlumnos(entrenador).length }} activo(s) · {{ getInactiveAlumnos(entrenador).length }} inactivo(s)</p>
             </div>
             <button @click="toggleTrainer(entrenador._id)" class="toggle-button">
               {{ isTrainerExpanded(entrenador._id) ? 'Ocultar' : 'Ver' }} Alumnos
@@ -361,7 +395,7 @@ async function guardarPagoEditado() {
 
           <div class="alumnos-section" v-if="isTrainerExpanded(entrenador._id)">
             <div 
-              v-for="alumno in entrenador.alumnos" 
+              v-for="alumno in getActiveAlumnos(entrenador)" 
               :key="alumno.id" 
               class="alumno-item"
             >
@@ -426,6 +460,27 @@ async function guardarPagoEditado() {
                     ? `${Math.abs(getDaysUntilPayment(alumno))} días de retraso`
                     : getDaysUntilPayment(alumno) === 0 ? '0 días de retraso' : `${getDaysUntilPayment(alumno)} días` }}
                 </span>
+              </div>
+            </div>
+
+            <div v-if="getInactiveAlumnos(entrenador).length > 0" class="inactive-students-block">
+              <h3 class="inactive-title">Alumnos inactivos</h3>
+              <div
+                v-for="alumno in getInactiveAlumnos(entrenador)"
+                :key="`inactive-${alumno._id || alumno.id}`"
+                class="alumno-item inactive"
+              >
+                <div class="alumno-details">
+                  <h3>{{ alumno.nombre }} {{ alumno.apellido }}</h3>
+                  <div class="alumno-payment-info">
+                    <p class="payment-info">Inactivo desde {{ formatDate(alumno.fechaInactivacion || alumno.updatedAt) }}</p>
+                  </div>
+                </div>
+                <div class="status-container">
+                  <button @click="reactivarAlumno(entrenador, alumno)" class="edit-payment-button">
+                    Reactivar
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -745,6 +800,24 @@ async function guardarPagoEditado() {
   align-items: center;
   gap: 16px;
   border: 1px solid var(--input-border);
+}
+
+.alumno-item.inactive {
+  opacity: 0.85;
+  border-style: dashed;
+}
+
+.inactive-students-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.inactive-title {
+  color: var(--header-text);
+  margin: 4px 0 0;
+  font-size: 1rem;
 }
 
 .alumno-details {

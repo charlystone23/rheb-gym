@@ -57,7 +57,7 @@ async function loadStatsData() {
     isLoading.value = true
     currentUser.value = getStoredUser()
     const [trainersData, expensesData] = await Promise.all([
-      MongoService.getEntrenadores(),
+      MongoService.getEntrenadores(true),
       MongoService.getExpenses(selectedMonth.value + 1, selectedYear.value)
     ])
 
@@ -100,6 +100,14 @@ function getUltimoPago(alumno) {
   return [...alumno.historialPagos].sort(comparePagosDesc)[0]
 }
 
+function getUltimoPagoHastaFecha(alumno, referenceDate) {
+  if (!alumno.historialPagos || alumno.historialPagos.length === 0) return null
+
+  return [...alumno.historialPagos]
+    .filter((pago) => new Date(pago.fecha) <= referenceDate)
+    .sort(comparePagosDesc)[0] || null
+}
+
 function isPromisePayment(tipo) {
   const normalized = String(tipo || "").trim().toLowerCase()
   return normalized === "promesa de pago" || normalized === "promesa_pago"
@@ -120,18 +128,18 @@ function comparePagosDesc(a, b) {
   return 0
 }
 
-function hasPendingPartialPayment(alumno) {
-  const ultimoPago = getUltimoPago(alumno)
+function hasPendingPartialPayment(alumno, referenceDate = new Date()) {
+  const ultimoPago = getUltimoPagoHastaFecha(alumno, referenceDate)
   return Boolean(ultimoPago?.esParcial && Number(ultimoPago?.saldoPendiente || 0) > 0)
 }
 
-function getPaymentStatus(alumno) {
-  const ultimoPago = getUltimoPago(alumno)
-  if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno))) {
+function getPaymentStatus(alumno, referenceDate = new Date()) {
+  const ultimoPago = getUltimoPagoHastaFecha(alumno, referenceDate)
+  if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno, referenceDate))) {
     return "red"
   }
 
-  const today = new Date()
+  const today = new Date(referenceDate)
   today.setHours(0, 0, 0, 0)
 
   let nextPaymentDate = new Date()
@@ -151,12 +159,53 @@ function getPaymentStatus(alumno) {
   return "green"
 }
 
+function getMonthBounds(year, month) {
+  const start = new Date(year, month, 1)
+  start.setHours(0, 0, 0, 0)
+
+  const end = new Date(year, month + 1, 0)
+  end.setHours(23, 59, 59, 999)
+
+  return { start, end }
+}
+
+function wasAlumnoActiveInRange(alumno, startDate, endDate) {
+  if (Array.isArray(alumno.periodosActividad) && alumno.periodosActividad.length > 0) {
+    return alumno.periodosActividad.some((periodo) => {
+      const inicio = new Date(periodo.inicio)
+      inicio.setHours(0, 0, 0, 0)
+
+      const fin = periodo.fin ? new Date(periodo.fin) : null
+      if (fin) {
+        fin.setHours(23, 59, 59, 999)
+      }
+
+      return inicio <= endDate && (!fin || fin >= startDate)
+    })
+  }
+
+  const fechaAlta = new Date(alumno.fechaRegistro || alumno.createdAt || endDate)
+  fechaAlta.setHours(0, 0, 0, 0)
+
+  const fechaInactivacion = alumno.fechaInactivacion ? new Date(alumno.fechaInactivacion) : null
+  if (fechaInactivacion) {
+    fechaInactivacion.setHours(23, 59, 59, 999)
+  }
+
+  return fechaAlta <= endDate && (!fechaInactivacion || fechaInactivacion >= startDate)
+}
+
 const statsPorEntrenador = computed(() => {
+  const monthBounds = getMonthBounds(selectedYear.value, selectedMonth.value)
+
   return entrenadoresVisibles.value.map((entrenador) => {
-    const totalAlumnos = entrenador.alumnos.length
-    const alDia = entrenador.alumnos.filter((a) => getPaymentStatus(a) === "green").length
-    const proximoVencer = entrenador.alumnos.filter((a) => getPaymentStatus(a) === "yellow").length
-    const deuda = entrenador.alumnos.filter((a) => getPaymentStatus(a) === "red").length
+    const alumnosActivosEnMes = (entrenador.alumnos || []).filter((alumno) =>
+      wasAlumnoActiveInRange(alumno, monthBounds.start, monthBounds.end)
+    )
+    const totalAlumnos = alumnosActivosEnMes.length
+    const alDia = alumnosActivosEnMes.filter((a) => getPaymentStatus(a, monthBounds.end) === "green").length
+    const proximoVencer = alumnosActivosEnMes.filter((a) => getPaymentStatus(a, monthBounds.end) === "yellow").length
+    const deuda = alumnosActivosEnMes.filter((a) => getPaymentStatus(a, monthBounds.end) === "red").length
 
     const filter = trainerFilters.value[entrenador._id] || globalDateRange.value
     const startDate = parseDisplayDate(filter.start)
@@ -179,7 +228,7 @@ const statsPorEntrenador = computed(() => {
     endDate.setHours(23, 59, 59, 999)
 
     let saldoHistorico = 0
-    entrenador.alumnos.forEach((alumno) => {
+    alumnosActivosEnMes.forEach((alumno) => {
       alumno.historialPagos.forEach((pago) => {
         const fechaPago = new Date(pago.fecha)
         if (fechaPago >= startDate && fechaPago <= endDate) {
@@ -211,7 +260,10 @@ const statsGenerales = computed(() => {
 
   let ingresosMes = 0
   entrenadoresVisibles.value.forEach((entrenador) => {
-    entrenador.alumnos.forEach((alumno) => {
+    const { start, end } = getMonthBounds(selectedYear.value, selectedMonth.value)
+    ;(entrenador.alumnos || [])
+      .filter((alumno) => wasAlumnoActiveInRange(alumno, start, end))
+      .forEach((alumno) => {
       alumno.historialPagos.forEach((pago) => {
         const fechaPago = new Date(pago.fecha)
         if (fechaPago.getMonth() === selectedMonth.value && fechaPago.getFullYear() === selectedYear.value) {

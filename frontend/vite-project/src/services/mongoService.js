@@ -15,9 +15,10 @@ export const MongoService = {
         }
     },
 
-    async getEntrenadores() {
+    async getEntrenadores(includeInactive = false) {
         try {
-            const response = await fetch(`${API_URL}/entrenadores`);
+            const query = includeInactive ? '?includeInactive=true' : '';
+            const response = await fetch(`${API_URL}/entrenadores${query}`);
             if (!response.ok) throw new Error('Error al obtener entrenadores');
             return await response.json();
         } catch (error) {
@@ -98,7 +99,7 @@ export const MongoService = {
 
     async deleteUsuario(userId) {
         try {
-            const response = await fetch(`${API_URL}/users/${userId}`, {
+            const response = await fetch(`${API_URL}/users/${userId}?hardDelete=true`, {
                 method: 'DELETE'
             });
             if (!response.ok) {
@@ -166,12 +167,17 @@ export const MongoService = {
         }
     },
 
-    async getAlumnos(entrenadorId = null) {
+    async getAlumnos(entrenadorId = null, options = {}) {
         try {
-            let url = `${API_URL}/alumnos`;
+            const params = new URLSearchParams();
             if (entrenadorId) {
-                url += `?entrenadorId=${entrenadorId}`;
+                params.append('entrenadorId', entrenadorId);
             }
+            if (options.includeInactive) params.append('includeInactive', 'true');
+            if (options.estado) params.append('estado', options.estado);
+
+            const query = params.toString();
+            const url = `${API_URL}/alumnos${query ? `?${query}` : ''}`;
             const response = await fetch(url);
             if (!response.ok) throw new Error('Error al obtener alumnos');
             // Normalize _id to id for frontend compatibility if needed, though Vue handles _id fine usually
@@ -211,6 +217,38 @@ export const MongoService = {
                 body: JSON.stringify(pago)
             });
             if (!response.ok) throw new Error('Error al registrar pago');
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
+    async deactivateUsuario(userId) {
+        try {
+            const response = await fetch(`${API_URL}/users/${userId}/deactivate`, {
+                method: 'POST'
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Error al desactivar usuario');
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
+    async reactivateUsuario(userId) {
+        try {
+            const response = await fetch(`${API_URL}/users/${userId}/reactivate`, {
+                method: 'POST'
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Error al reactivar usuario');
+            }
             return await response.json();
         } catch (error) {
             console.error("API Error:", error);
@@ -301,12 +339,40 @@ export const MongoService = {
         }
     },
 
-    async deleteAlumno(id) {
+    async deleteAlumno(id, actor = {}) {
         try {
-            const response = await fetch(`${API_URL}/alumnos/${id}`, {
+            const params = new URLSearchParams();
+            if (actor.role) params.append('actorRole', actor.role);
+            if (actor.userId) params.append('actorUserId', actor.userId);
+            const query = params.toString();
+            const response = await fetch(`${API_URL}/alumnos/${id}${query ? `?${query}` : ''}`, {
                 method: 'DELETE'
             });
-            if (!response.ok) throw new Error('Error al eliminar alumno');
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Error al desactivar alumno');
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
+    async reactivarAlumno(id, actor) {
+        try {
+            const response = await fetch(`${API_URL}/alumnos/${id}/reactivar`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    actorRole: actor?.role,
+                    actorUserId: actor?._id || actor?.userId || null
+                })
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Error al reactivar alumno');
+            }
             return await response.json();
         } catch (error) {
             console.error("API Error:", error);

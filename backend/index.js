@@ -97,6 +97,9 @@ const UserSchema = new mongoose.Schema({
     password: { type: String, required: true }, // En producción: hashear contraseña
     role: { type: String, enum: ['admin', 'entrenador'], default: 'entrenador' },
     nombre: { type: String },
+    estado: { type: String, enum: ['activo', 'inactivo'], default: 'activo' },
+    fechaInactivacion: { type: Date, default: null },
+    fechaReactivacion: { type: Date, default: null },
     linkedAdmin: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     linkedTrainer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     includeInAdminStats: { type: Boolean, default: true }
@@ -149,12 +152,22 @@ const PagoSchema = new mongoose.Schema({
     monto: { type: Number }
 }, { timestamps: true });
 
+const PeriodoActividadSchema = new mongoose.Schema({
+    inicio: { type: Date, required: true },
+    fin: { type: Date, default: null }
+}, { _id: false });
+
 const AlumnoSchema = new mongoose.Schema({
     nombre: { type: String, required: true },
     apellido: { type: String, required: true },
     celular: { type: String, required: false },
     fechaRegistro: { type: Date, default: Date.now },
-    estado: { type: String, default: 'activo' },
+    estado: { type: String, enum: ['activo', 'inactivo'], default: 'activo' },
+    fechaInactivacion: { type: Date, default: null },
+    inactivatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    fechaReactivacion: { type: Date, default: null },
+    reactivatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    periodosActividad: { type: [PeriodoActividadSchema], default: [] },
     historialPagos: [PagoSchema],
     entrenador: { type: mongoose.Schema.Types.ObjectId, ref: 'User' } // Link al entrenador
 }, { timestamps: true });
@@ -165,6 +178,96 @@ const Rutina = mongoose.model('Rutina', RutinaSchema);
 const Membresia = mongoose.model('Membresia', MembresiaSchema);
 const Horario = mongoose.model('Horario', HorarioSchema);
 
+async function migrateExistingUsers() {
+    try {
+        await User.updateMany(
+            { estado: { $exists: false } },
+            { $set: { estado: 'activo' } }
+        );
+        await User.updateMany(
+            { fechaInactivacion: { $exists: false } },
+            { $set: { fechaInactivacion: null } }
+        );
+        await User.updateMany(
+            { fechaReactivacion: { $exists: false } },
+            { $set: { fechaReactivacion: null } }
+        );
+    } catch (err) {
+        console.warn('No se pudo completar la migracion de usuarios:', err.message);
+    }
+}
+
+async function migrateExistingStudents() {
+    try {
+        await Alumno.updateMany(
+            { estado: { $exists: false } },
+            { $set: { estado: 'activo' } }
+        );
+        await Alumno.updateMany(
+            { fechaInactivacion: { $exists: false } },
+            { $set: { fechaInactivacion: null } }
+        );
+        await Alumno.updateMany(
+            { inactivatedBy: { $exists: false } },
+            { $set: { inactivatedBy: null } }
+        );
+        await Alumno.updateMany(
+            { fechaReactivacion: { $exists: false } },
+            { $set: { fechaReactivacion: null } }
+        );
+        await Alumno.updateMany(
+            { reactivatedBy: { $exists: false } },
+            { $set: { reactivatedBy: null } }
+        );
+
+        const alumnos = await Alumno.find({
+            $or: [
+                { periodosActividad: { $exists: false } },
+                { periodosActividad: { $size: 0 } }
+            ]
+        });
+
+        for (const alumno of alumnos) {
+            const inicio = alumno.fechaRegistro || alumno.createdAt || new Date();
+            const periodosActividad = [{
+                inicio,
+                fin: alumno.estado === 'inactivo' ? (alumno.fechaInactivacion || new Date()) : null
+            }];
+
+            alumno.periodosActividad = periodosActividad;
+            await alumno.save();
+        }
+    } catch (err) {
+        console.warn('No se pudo completar la migracion de alumnos:', err.message);
+    }
+}
+
+function ensureAlumnoPeriodos(alumno) {
+    if (!alumno.periodosActividad || alumno.periodosActividad.length === 0) {
+        alumno.periodosActividad = [{
+            inicio: alumno.fechaRegistro || alumno.createdAt || new Date(),
+            fin: alumno.estado === 'inactivo' ? (alumno.fechaInactivacion || new Date()) : null
+        }];
+    }
+
+    return alumno.periodosActividad;
+}
+
+mongoose.connection.once('connected', () => {
+    migrateExistingUsers();
+});
+
+mongoose.connection.once('connected', () => {
+    migrateExistingStudents();
+});
+
+async function removeAlumnoAssignments(alumnoId) {
+    await Horario.updateMany(
+        { 'asignaciones.alumno': alumnoId },
+        { $pull: { asignaciones: { alumno: alumnoId } } }
+    );
+}
+
 function sanitizeUser(user) {
     if (!user) return null;
 
@@ -173,6 +276,9 @@ function sanitizeUser(user) {
         username: user.username,
         role: user.role,
         nombre: user.nombre,
+        estado: user.estado ?? 'activo',
+        fechaInactivacion: user.fechaInactivacion ?? null,
+        fechaReactivacion: user.fechaReactivacion ?? null,
         linkedAdminId: user.linkedAdmin?._id || user.linkedAdmin || null,
         linkedTrainerId: user.linkedTrainer?._id || user.linkedTrainer || null,
         includeInAdminStats: user.includeInAdminStats ?? true
@@ -192,6 +298,10 @@ app.post('/api/login', async (req, res) => {
 
         if (!user) {
             return res.status(401).json({ success: false, message: 'Credenciales inválidas' });
+        }
+
+        if (user.estado === 'inactivo') {
+            return res.status(403).json({ success: false, message: 'Este usuario esta inactivo. Un administrador debe habilitarlo nuevamente.' });
         }
 
         // Retornamos el usuario (sin password idealmente, pero para simpleza lo enviamos todo o filtramos)
@@ -302,6 +412,10 @@ app.put('/api/users/:id', async (req, res) => {
             delete updateData.password;
         }
 
+        if (updateData.estado) {
+            delete updateData.estado;
+        }
+
         const user = await User.findByIdAndUpdate(id, updateData, { new: true });
 
         res.json(sanitizeUser(user));
@@ -310,10 +424,63 @@ app.put('/api/users/:id', async (req, res) => {
     }
 });
 
+app.post('/api/users/:id/deactivate', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userToDeactivate = await User.findById(id);
+
+        if (!userToDeactivate) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+
+        if (userToDeactivate.role !== 'entrenador') {
+            return res.status(400).json({ error: 'Solo se pueden desactivar entrenadores.' });
+        }
+
+        if (userToDeactivate.estado === 'inactivo') {
+            return res.status(400).json({ error: 'El entrenador ya esta inactivo.' });
+        }
+
+        userToDeactivate.estado = 'inactivo';
+        userToDeactivate.fechaInactivacion = new Date();
+        userToDeactivate.fechaReactivacion = null;
+        await userToDeactivate.save();
+
+        res.json({ message: 'Entrenador desactivado correctamente', user: sanitizeUser(userToDeactivate) });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/users/:id/reactivate', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userToReactivate = await User.findById(id);
+
+        if (!userToReactivate) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+
+        if (userToReactivate.role !== 'entrenador') {
+            return res.status(400).json({ error: 'Solo se pueden reactivar entrenadores.' });
+        }
+
+        userToReactivate.estado = 'activo';
+        userToReactivate.fechaInactivacion = null;
+        userToReactivate.fechaReactivacion = new Date();
+        await userToReactivate.save();
+
+        res.json({ message: 'Entrenador reactivado correctamente', user: sanitizeUser(userToReactivate) });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // DELETE USER
 app.delete('/api/users/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        const hardDelete = String(req.query.hardDelete || '').toLowerCase() === 'true';
         const userToDelete = await User.findById(id);
 
         if (!userToDelete) {
@@ -324,6 +491,12 @@ app.delete('/api/users/:id', async (req, res) => {
         if (userToDelete.role === 'admin') {
             return res.status(403).json({
                 error: 'No se puede eliminar a un usuario con rol administrador para proteger el acceso al sistema.'
+            });
+        }
+
+        if (!hardDelete) {
+            return res.status(400).json({
+                error: 'La eliminacion definitiva requiere confirmacion explicita.'
             });
         }
 
@@ -351,12 +524,22 @@ app.delete('/api/users/:id', async (req, res) => {
 // GET Entrenadores con sus Alumnos (Vista Admin)
 app.get('/api/entrenadores', async (req, res) => {
     try {
-        const entrenadores = await User.find({ role: 'entrenador' });
+        const includeInactive = String(req.query.includeInactive || '').toLowerCase() === 'true';
+        const trainerFilter = { role: 'entrenador' };
+        if (!includeInactive) {
+            trainerFilter.estado = 'activo';
+        }
+        const entrenadores = await User.find(trainerFilter);
 
         // Para simplificar, hacemos un "join" manual o usamos aggregate
         // Aquí recuperamos los alumnos de cada entrenador
         const reporte = await Promise.all(entrenadores.map(async (entrenador) => {
-            const alumnos = await Alumno.find({ entrenador: entrenador._id });
+            const alumnoFilter = { entrenador: entrenador._id };
+            if (!includeInactive) {
+                alumnoFilter.estado = 'activo';
+            }
+
+            const alumnos = await Alumno.find(alumnoFilter).sort({ createdAt: -1 });
             return {
                 ...entrenador.toObject(),
                 alumnos: alumnos
@@ -376,6 +559,12 @@ app.get('/api/alumnos', async (req, res) => {
         if (req.query.entrenadorId) {
             filter.entrenador = req.query.entrenadorId;
         }
+        const includeInactive = String(req.query.includeInactive || '').toLowerCase() === 'true';
+        if (req.query.estado) {
+            filter.estado = req.query.estado;
+        } else if (!includeInactive) {
+            filter.estado = 'activo';
+        }
         const alumnos = await Alumno.find(filter).sort({ createdAt: -1 });
         res.json(alumnos);
     } catch (err) {
@@ -388,6 +577,12 @@ app.post('/api/alumnos', async (req, res) => {
     try {
         // req.body debe incluir 'entrenador' (ID)
         const nuevoAlumno = new Alumno(req.body);
+        if (!nuevoAlumno.periodosActividad || nuevoAlumno.periodosActividad.length === 0) {
+            nuevoAlumno.periodosActividad = [{
+                inicio: nuevoAlumno.fechaRegistro || new Date(),
+                fin: null
+            }];
+        }
         const savedAlumno = await nuevoAlumno.save();
         res.status(201).json(savedAlumno);
     } catch (err) {
@@ -399,21 +594,92 @@ app.post('/api/alumnos', async (req, res) => {
 app.put('/api/alumnos/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        const existingAlumno = await Alumno.findById(id);
+        if (!existingAlumno) return res.status(404).json({ error: 'Alumno no encontrado' });
+
+        if (req.body.estado === 'activo') {
+            return res.status(400).json({ error: 'Usa la ruta de reactivacion para volver a habilitar un alumno.' });
+        }
+
+        if (existingAlumno.estado === 'inactivo' && req.body.estado !== 'activo') {
+            const allowedFields = ['nombre', 'apellido', 'celular', 'entrenador'];
+            const invalidField = Object.keys(req.body).find((key) => !allowedFields.includes(key));
+            if (invalidField) {
+                return res.status(400).json({ error: 'El alumno esta inactivo. Solo un administrador puede reactivarlo.' });
+            }
+        }
+
         const updated = await Alumno.findByIdAndUpdate(id, req.body, { new: true });
-        if (!updated) return res.status(404).json({ error: 'Alumno no encontrado' });
         res.json(updated);
     } catch (err) {
         res.status(400).json({ error: err.message });
     }
 });
 
-// DELETE Alumno
+// DEACTIVATE Alumno
 app.delete('/api/alumnos/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const deleted = await Alumno.findByIdAndDelete(id);
-        if (!deleted) return res.status(404).json({ error: 'Alumno no encontrado' });
-        res.json({ message: 'Alumno eliminado correctamente' });
+        const actorRole = req.query.actorRole || null;
+        const actorUserId = req.query.actorUserId || null;
+        const alumno = await Alumno.findById(id);
+        if (!alumno) return res.status(404).json({ error: 'Alumno no encontrado' });
+        if (alumno.estado === 'inactivo') {
+            return res.status(400).json({ error: 'El alumno ya esta inactivo' });
+        }
+
+        const periodosActividad = ensureAlumnoPeriodos(alumno);
+        const periodoActivo = [...periodosActividad].reverse().find((periodo) => !periodo.fin);
+        if (periodoActivo) {
+            periodoActivo.fin = new Date();
+        }
+
+        alumno.estado = 'inactivo';
+        alumno.fechaInactivacion = new Date();
+        alumno.inactivatedBy = actorUserId || null;
+        alumno.fechaReactivacion = null;
+        alumno.reactivatedBy = null;
+        await alumno.save();
+
+        await removeAlumnoAssignments(alumno._id);
+
+        res.json({
+            message: actorRole === 'admin'
+                ? 'Alumno desactivado correctamente'
+                : 'Alumno pasado a inactivo correctamente',
+            alumno
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/alumnos/:id/reactivar', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { actorRole, actorUserId } = req.body;
+
+        if (actorRole !== 'admin') {
+            return res.status(403).json({ error: 'Solo un administrador puede reactivar alumnos.' });
+        }
+
+        const alumno = await Alumno.findById(id);
+        if (!alumno) return res.status(404).json({ error: 'Alumno no encontrado' });
+
+        ensureAlumnoPeriodos(alumno);
+
+        alumno.estado = 'activo';
+        alumno.fechaInactivacion = null;
+        alumno.inactivatedBy = null;
+        alumno.fechaReactivacion = new Date();
+        alumno.reactivatedBy = actorUserId || null;
+        alumno.periodosActividad.push({
+            inicio: alumno.fechaReactivacion,
+            fin: null
+        });
+        await alumno.save();
+
+        res.json(alumno);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -605,6 +871,9 @@ app.post('/api/horarios/:id/asignaciones', async (req, res) => {
         // Membership cap check
         const alumno = await Alumno.findById(alumnoId);
         if (!alumno) return res.status(404).json({ error: 'Alumno no encontrado' });
+        if (alumno.estado !== 'activo') {
+            return res.status(400).json({ error: 'No se puede asignar un alumno inactivo a un turno' });
+        }
 
         const diasPermitidos = await getDiasPermitidos(alumno);
         if (diasPermitidos !== null) {
@@ -730,6 +999,9 @@ app.get('/api/alumnos/:id/asignaciones', async (req, res) => {
     try {
         const alumno = await Alumno.findById(req.params.id);
         if (!alumno) return res.status(404).json({ error: 'Alumno no encontrado' });
+        if (alumno.estado !== 'activo') {
+            return res.status(400).json({ error: 'El alumno esta inactivo' });
+        }
 
         const total = await getTotalAsignacionesAlumno(req.params.id);
         const diasPermitidos = await getDiasPermitidos(alumno);
@@ -784,6 +1056,12 @@ app.post('/api/alumnos/:id/pagos', async (req, res) => {
     try {
         const { id } = req.params;
         const pago = req.body;
+        const alumnoExistente = await Alumno.findById(id);
+
+        if (!alumnoExistente) return res.status(404).json({ error: 'Alumno no encontrado' });
+        if (alumnoExistente.estado !== 'activo') {
+            return res.status(400).json({ error: 'No se pueden registrar pagos en un alumno inactivo. Reactivalo primero.' });
+        }
 
         const alumno = await Alumno.findByIdAndUpdate(
             id,
@@ -805,6 +1083,9 @@ app.put('/api/alumnos/:id/pagos/:pagoId', async (req, res) => {
         const alumno = await Alumno.findById(id);
 
         if (!alumno) return res.status(404).json({ error: 'Alumno no encontrado' });
+        if (alumno.estado !== 'activo') {
+            return res.status(400).json({ error: 'No se pueden editar pagos de un alumno inactivo. Reactivalo primero.' });
+        }
 
         const pago = alumno.historialPagos.id(pagoId);
         if (!pago) return res.status(404).json({ error: 'Pago no encontrado' });

@@ -691,7 +691,10 @@ async function confirmarEliminacion() {
 
   try {
     isLoading.value = true
-    await MongoService.deleteAlumno(alumnoAEliminar.value.id || alumnoAEliminar.value._id)
+    await MongoService.deleteAlumno(alumnoAEliminar.value.id || alumnoAEliminar.value._id, {
+      role: currentUser.value?.role,
+      userId: currentUser.value?._id
+    })
     alumnos.value = alumnos.value.filter(a => 
       a.id !== (alumnoAEliminar.value.id || alumnoAEliminar.value._id) && 
       a._id !== (alumnoAEliminar.value.id || alumnoAEliminar.value._id)
@@ -699,7 +702,7 @@ async function confirmarEliminacion() {
     closeDeleteModal()
   } catch (e) {
     console.error(e)
-    alert("Error al eliminar el alumno")
+    alert(e.message || "Error al desactivar el alumno")
   } finally {
     isLoading.value = false
   }
@@ -917,7 +920,7 @@ async function confirmarDelegacion() {
             >
               ✏️
             </button>
-            <button @click.stop="openDeleteConfirm(alumno)" class="delete-alumno-button-inline" title="Eliminar Alumno">
+            <button @click.stop="openDeleteConfirm(alumno)" class="delete-alumno-button-inline" title="Desactivar Alumno">
               🗑️
             </button>
             </div>
