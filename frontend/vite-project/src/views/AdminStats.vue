@@ -159,6 +159,29 @@ function getPagoPeriodoInfo(pago) {
   }
 }
 
+function getPeriodBoundsFromDate(date) {
+  const start = new Date(date.getFullYear(), date.getMonth(), 1)
+  start.setHours(0, 0, 0, 0)
+
+  const end = new Date(date.getFullYear(), date.getMonth() + 1, 0)
+  end.setHours(23, 59, 59, 999)
+
+  return { start, end }
+}
+
+function getPeriodStartsInRange(startDate, endDate) {
+  const periods = []
+  const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1)
+  cursor.setHours(0, 0, 0, 0)
+
+  while (cursor <= endDate) {
+    periods.push(new Date(cursor))
+    cursor.setMonth(cursor.getMonth() + 1)
+  }
+
+  return periods
+}
+
 function getUltimoPagoHastaPeriodo(alumno, referenceDate = new Date()) {
   if (!alumno.historialPagos || alumno.historialPagos.length === 0) return null
 
@@ -190,7 +213,26 @@ function isPagoInPeriodRange(pago, startDate, endDate) {
   return periodo.date >= startDate && periodo.date <= endDate
 }
 
+function getPagosForExactPeriodo(alumno, referenceDate = new Date()) {
+  if (!alumno.historialPagos || alumno.historialPagos.length === 0) return []
+
+  const targetMonth = referenceDate.getMonth() + 1
+  const targetYear = referenceDate.getFullYear()
+
+  return alumno.historialPagos
+    .filter((pago) => {
+      const periodo = getPagoPeriodoInfo(pago)
+      return periodo?.month === targetMonth && periodo?.year === targetYear
+    })
+    .sort(comparePagosDesc)
+}
+
 function getEstimatedAmountForAlumno(alumno, referenceDate = new Date()) {
+  const pagosDelPeriodo = getPagosForExactPeriodo(alumno, referenceDate)
+  if (pagosDelPeriodo.length > 0) {
+    return pagosDelPeriodo.reduce((acc, pago) => acc + getPaymentAmount(pago), 0)
+  }
+
   const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
   if (!ultimoPago) return 0
 
@@ -267,6 +309,14 @@ function wasAlumnoActiveInRange(alumno, startDate, endDate) {
   return fechaAlta <= endDate && (!fechaInactivacion || fechaInactivacion >= startDate)
 }
 
+function getEstimatedAmountForAlumnoInRange(alumno, startDate, endDate) {
+  return getPeriodStartsInRange(startDate, endDate).reduce((acc, periodDate) => {
+    const { start, end } = getPeriodBoundsFromDate(periodDate)
+    if (!wasAlumnoActiveInRange(alumno, start, end)) return acc
+    return acc + getEstimatedAmountForAlumno(alumno, periodDate)
+  }, 0)
+}
+
 const statsPorEntrenador = computed(() => {
   const monthBounds = getMonthBounds(selectedYear.value, selectedMonth.value)
 
@@ -292,10 +342,9 @@ const statsPorEntrenador = computed(() => {
         proximoVencer,
         deuda,
         montoReal: 0,
-        montoEstimado: alumnosActivosEnMes.reduce(
-          (acc, alumno) => acc + getEstimatedAmountForAlumno(alumno, monthBounds.end),
-          0
-        ),
+        montoEstimado: alumnosActivosEnMes.reduce((acc, alumno) => {
+          return acc + getEstimatedAmountForAlumnoInRange(alumno, monthBounds.start, monthBounds.end)
+        }, 0),
         porcentajeActivos: totalAlumnos > 0 ? Math.round(((alDia + proximoVencer) / totalAlumnos) * 100) : 0
       }
     }
@@ -312,10 +361,9 @@ const statsPorEntrenador = computed(() => {
       })
     })
 
-    const montoEstimado = alumnosActivosEnMes.reduce(
-      (acc, alumno) => acc + getEstimatedAmountForAlumno(alumno, endDate),
-      0
-    )
+    const montoEstimado = alumnosActivosEnMes.reduce((acc, alumno) => {
+      return acc + getEstimatedAmountForAlumnoInRange(alumno, startDate, endDate)
+    }, 0)
 
     return {
       id: entrenador._id,
@@ -346,7 +394,7 @@ const statsGenerales = computed(() => {
     ;(entrenador.alumnos || [])
       .filter((alumno) => wasAlumnoActiveInRange(alumno, start, end))
       .forEach((alumno) => {
-      montoEstimadoMes += getEstimatedAmountForAlumno(alumno, end)
+      montoEstimadoMes += getEstimatedAmountForAlumnoInRange(alumno, start, end)
       alumno.historialPagos.forEach((pago) => {
         const periodo = getPagoPeriodoInfo(pago)
         if (periodo?.month === selectedMonth.value + 1 && periodo?.year === selectedYear.value) {
