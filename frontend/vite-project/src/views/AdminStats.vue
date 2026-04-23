@@ -227,24 +227,36 @@ function getPagosForExactPeriodo(alumno, referenceDate = new Date()) {
     .sort(comparePagosDesc)
 }
 
-function getEstimatedAmountForAlumno(alumno, referenceDate = new Date()) {
-  const pagosDelPeriodo = getPagosForExactPeriodo(alumno, referenceDate)
-  if (pagosDelPeriodo.length > 0) {
-    return pagosDelPeriodo.reduce((acc, pago) => acc + getPaymentAmount(pago), 0)
-  }
+function getMembershipPrice(membresia) {
+  if (!membresia) return 0
 
+  return Number(membresia.precio || 0)
+}
+
+function getAlumnoMembershipSnapshot(alumno, referenceDate = new Date()) {
   const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
-  if (!ultimoPago) return 0
-
-  if (typeof ultimoPago.montoObjetivo === "number" && ultimoPago.montoObjetivo > 0) {
-    return ultimoPago.montoObjetivo
+  if (ultimoPago?.membresia) {
+    return ultimoPago.membresia
   }
 
-  if (typeof ultimoPago.membresia?.precio === "number" && ultimoPago.membresia.precio > 0) {
-    return ultimoPago.membresia.precio
-  }
+  const ultimoPagoConMembresia = [...(alumno.historialPagos || [])]
+    .filter((pago) => {
+      if (!pago?.membresia) return false
+      const periodo = getPagoPeriodoInfo(pago)
+      if (!periodo) return false
 
-  return getPaymentAmount(ultimoPago)
+      const referenceMonth = referenceDate.getMonth() + 1
+      const referenceYear = referenceDate.getFullYear()
+      return periodo.year < referenceYear || (periodo.year === referenceYear && periodo.month <= referenceMonth)
+    })
+    .sort(comparePagosDesc)[0]
+
+  return ultimoPagoConMembresia?.membresia || null
+}
+
+function getEstimatedAmountForAlumno(alumno, referenceDate = new Date()) {
+  const membershipSnapshot = getAlumnoMembershipSnapshot(alumno, referenceDate)
+  return getMembershipPrice(membershipSnapshot)
 }
 
 function getPaymentStatus(alumno, referenceDate = new Date()) {
@@ -283,6 +295,23 @@ function getMonthBounds(year, month) {
   return { start, end }
 }
 
+function getStatusReferenceDate(year, month) {
+  const now = new Date()
+  now.setHours(0, 0, 0, 0)
+
+  const selectedStart = new Date(year, month, 1)
+  selectedStart.setHours(0, 0, 0, 0)
+
+  const selectedEnd = new Date(year, month + 1, 0)
+  selectedEnd.setHours(23, 59, 59, 999)
+
+  if (now >= selectedStart && now <= selectedEnd) {
+    return now
+  }
+
+  return selectedEnd
+}
+
 function wasAlumnoActiveInRange(alumno, startDate, endDate) {
   if (Array.isArray(alumno.periodosActividad) && alumno.periodosActividad.length > 0) {
     return alumno.periodosActividad.some((periodo) => {
@@ -319,15 +348,16 @@ function getEstimatedAmountForAlumnoInRange(alumno, startDate, endDate) {
 
 const statsPorEntrenador = computed(() => {
   const monthBounds = getMonthBounds(selectedYear.value, selectedMonth.value)
+  const statusReferenceDate = getStatusReferenceDate(selectedYear.value, selectedMonth.value)
 
   return entrenadoresVisibles.value.map((entrenador) => {
     const alumnosActivosEnMes = (entrenador.alumnos || []).filter((alumno) =>
       wasAlumnoActiveInRange(alumno, monthBounds.start, monthBounds.end)
     )
     const totalAlumnos = alumnosActivosEnMes.length
-    const alDia = alumnosActivosEnMes.filter((a) => getPaymentStatus(a, monthBounds.end) === "green").length
-    const proximoVencer = alumnosActivosEnMes.filter((a) => getPaymentStatus(a, monthBounds.end) === "yellow").length
-    const deuda = alumnosActivosEnMes.filter((a) => getPaymentStatus(a, monthBounds.end) === "red").length
+    const alDia = alumnosActivosEnMes.filter((a) => getPaymentStatus(a, statusReferenceDate) === "green").length
+    const proximoVencer = alumnosActivosEnMes.filter((a) => getPaymentStatus(a, statusReferenceDate) === "yellow").length
+    const deuda = alumnosActivosEnMes.filter((a) => getPaymentStatus(a, statusReferenceDate) === "red").length
 
     const filter = trainerFilters.value[entrenador._id] || globalDateRange.value
     const startDate = parseDisplayDate(filter.start)

@@ -151,7 +151,8 @@ const PagoSchema = new mongoose.Schema({
         nombre: { type: String },
         precio: { type: Number }
     },
-    monto: { type: Number }
+    monto: { type: Number },
+    montoInformado: { type: Number, default: null }
 }, { timestamps: true });
 
 const PeriodoActividadSchema = new mongoose.Schema({
@@ -1177,6 +1178,7 @@ app.put('/api/alumnos/:id/pagos/:pagoId', async (req, res) => {
             'detalle',
             'medio',
             'monto',
+            'montoInformado',
             'membresia',
             'esParcial',
             'completaParcial',

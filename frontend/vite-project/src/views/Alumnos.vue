@@ -96,6 +96,7 @@ function getPaymentLabel(pago) {
 
 function getPaymentAmount(pago) {
   if (!pago) return 0
+  if (typeof pago.montoInformado === "number") return pago.montoInformado
   if (typeof pago.monto === "number") return pago.monto
   return Number(pago.monto || pago.membresia?.precio || 0)
 }
@@ -172,6 +173,28 @@ function getBaseAmountForCurrentPayment(selectedM, alumno) {
   }
 
   return selectedM ? selectedM.precio : 0
+}
+
+function resolveStoredAmounts({ tipoPago, montoIngresado, membresiaPrecio, pagoParcial = false }) {
+  if (isPromisePayment(tipoPago)) {
+    return { monto: 0, montoInformado: 0 }
+  }
+
+  if (pagoParcial) {
+    return { monto: montoIngresado, montoInformado: montoIngresado }
+  }
+
+  if (isDiscountPayment(tipoPago)) {
+    return {
+      monto: membresiaPrecio,
+      montoInformado: montoIngresado
+    }
+  }
+
+  return {
+    monto: montoIngresado,
+    montoInformado: montoIngresado
+  }
 }
 
 const filteredAlumnos = computed(() => {
@@ -483,6 +506,12 @@ async function agregarAlumno() {
     }
   }
 
+  const storedAmounts = resolveStoredAmounts({
+    tipoPago: nuevoAlumno.value.tipoPago,
+    montoIngresado: montoCalculado,
+    membresiaPrecio: Number(selectedM?.precio || 0)
+  })
+
   const historial = [{
     fecha: fechaPagoDate,
     mesQueAbona: Number(nuevoAlumno.value.mesQueAbona || (fechaPagoDate.getMonth() + 1)),
@@ -499,7 +528,8 @@ async function agregarAlumno() {
       nombre: selectedM.nombre,
       precio: selectedM.precio
     } : null,
-    monto: isPromisePayment(nuevoAlumno.value.tipoPago) ? 0 : montoCalculado
+    monto: storedAmounts.monto,
+    montoInformado: storedAmounts.montoInformado
   }]
 
   const alumnoData = {
@@ -701,7 +731,12 @@ async function registrarPago() {
       nombre: selectedM.nombre,
       precio: selectedM.precio
     } : null,
-    monto: isPromisePayment(tipoFinal) ? 0 : montoCalculado,
+    ...resolveStoredAmounts({
+      tipoPago: tipoFinal,
+      montoIngresado: montoCalculado,
+      membresiaPrecio: Number(selectedM?.precio || 0),
+      pagoParcial: nuevoPago.value.pagoParcial
+    }),
     allowDuplicateSameDay
   }
   
@@ -925,7 +960,7 @@ async function confirmarDelegacion() {
                 {{ formatDate(getUltimoPago(alumno).fecha) }} 
                 <span class="payment-type">({{ getPaymentLabel(getUltimoPago(alumno)) }})</span>
                 <span v-if="getUltimoPago(alumno).membresia" class="membership-info-chip">
-                  {{ getUltimoPago(alumno).membresia.nombre }} - ${{ (getUltimoPago(alumno).monto ?? getUltimoPago(alumno).membresia.precio).toLocaleString() }}
+                  {{ getUltimoPago(alumno).membresia.nombre }} - ${{ getPaymentAmount(getUltimoPago(alumno)).toLocaleString() }}
                 </span>
               </p>
               <p class="payment-date" v-else>Sin pagos registrados</p>
@@ -959,7 +994,7 @@ async function confirmarDelegacion() {
                   <span class="history-date">{{ formatDate(pago.fecha) }}</span>
                   <span class="history-type">{{ getPaymentLabel(pago) }}</span>
                   <span v-if="pago.membresia" class="history-membresia">
-                    {{ pago.membresia.nombre }} (${{ (pago.monto ?? pago.membresia.precio).toLocaleString() }})
+                    {{ pago.membresia.nombre }} (${{ getPaymentAmount(pago).toLocaleString() }})
                   </span>
                 </div>
               </div>
@@ -1141,6 +1176,7 @@ async function confirmarDelegacion() {
               placeholder="Ingrese el monto con descuento"
               required
             />
+            <small>Se informa como referencia. En estadísticas contará el valor completo de la membresía.</small>
           </div>
 
           <div class="form-group">
@@ -1252,7 +1288,7 @@ async function confirmarDelegacion() {
           </div>
 
           <div class="form-group" v-if="nuevoPago.pagoSimilar">
-            <label for="montoSimilarPago">Monto del Pago *</label>
+            <label for="montoSimilarPago">Monto informado del pago *</label>
             <input
               id="montoSimilarPago"
               v-model="nuevoPago.montoSimilar"
@@ -1313,6 +1349,7 @@ async function confirmarDelegacion() {
               placeholder="Ingrese el monto con descuento"
               required
             />
+            <small>Se guarda como dato informativo. Las estadísticas toman el valor de la membresía.</small>
           </div>
 
           <div v-if="error" class="error-message">

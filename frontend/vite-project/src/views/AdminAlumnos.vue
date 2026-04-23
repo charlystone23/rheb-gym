@@ -24,6 +24,7 @@ const pagoActual = ref({
   tipoPago: "efectivo",
   membresiaId: "",
   monto: "",
+  montoContable: "",
   medio: "transferencia"
 })
 const currentYear = new Date().getFullYear()
@@ -66,6 +67,39 @@ function getPaymentLabel(pago) {
   if (pago.esParcial) return `Pago parcial (${pago.tipo || "pago"})`
   if (pago.completaParcial) return `Completa pago (${pago.tipo || "pago"})`
   return pago.detalle || pago.tipo || ""
+}
+
+function getDisplayedPaymentAmount(pago) {
+  if (!pago) return 0
+  if (typeof pago.montoInformado === "number") return pago.montoInformado
+  if (typeof pago.monto === "number") return pago.monto
+  return Number(pago.monto || pago.membresia?.precio || 0)
+}
+
+function getSelectedMembershipPrice(membershipId) {
+  return Number(membresias.value.find((m) => m._id === membershipId)?.precio || 0)
+}
+
+function resolveStoredAmounts({ tipoPago, montoIngresado, membresiaPrecio, pagoParcial = false }) {
+  if (isPromisePayment(tipoPago)) {
+    return { monto: 0, montoInformado: 0 }
+  }
+
+  if (pagoParcial) {
+    return { monto: montoIngresado, montoInformado: montoIngresado }
+  }
+
+  if (isDiscountPayment(tipoPago)) {
+    return {
+      monto: membresiaPrecio,
+      montoInformado: montoIngresado
+    }
+  }
+
+  return {
+    monto: montoIngresado,
+    montoInformado: montoIngresado
+  }
 }
 
 function comparePagosDesc(a, b) {
@@ -265,6 +299,7 @@ function closeEditPaymentModal() {
     tipoPago: "efectivo",
     membresiaId: "",
     monto: "",
+    montoContable: "",
     medio: "transferencia"
   }
 }
@@ -291,7 +326,8 @@ function openEditPaymentModal(entrenador, alumno) {
     mesQueAbona: Number(ultimoPago.mesQueAbona || (new Date(ultimoPago.fecha).getMonth() + 1)),
     tipoPago: normalizePaymentType(ultimoPago.tipo || ultimoPago.detalle) || "efectivo",
     membresiaId,
-    monto: String(ultimoPago.monto ?? ultimoPago.membresia?.precio ?? ""),
+    monto: String(ultimoPago.montoInformado ?? ultimoPago.monto ?? ultimoPago.membresia?.precio ?? ""),
+    montoContable: String(ultimoPago.monto ?? ultimoPago.membresia?.precio ?? ""),
     medio: ultimoPago.medio || "transferencia"
   }
   error.value = ""
@@ -353,12 +389,17 @@ async function guardarPagoEditado() {
         ? "Descuento"
         : "",
     medio: isDiscountPayment(tipoNormalizado) ? (pagoActual.value.medio || "transferencia") : "",
-    monto: isPromisePayment(tipoNormalizado) ? 0 : monto,
     membresia: {
       id: selectedMembresia._id,
       nombre: selectedMembresia.nombre,
       precio: selectedMembresia.precio
     },
+    ...resolveStoredAmounts({
+      tipoPago: tipoNormalizado,
+      montoIngresado: monto,
+      membresiaPrecio: Number(selectedMembresia.precio || 0),
+      pagoParcial: Boolean(ultimoPago?.esParcial)
+    }),
     esParcial: ultimoPago?.esParcial || false,
     completaParcial: ultimoPago?.completaParcial || false,
     montoObjetivo: ultimoPago?.montoObjetivo ?? null,
@@ -497,8 +538,8 @@ async function guardarPagoEditado() {
                   <p v-if="getUltimoPago(alumno)" class="payment-info">
                     Último pago: {{ formatDate(getUltimoPago(alumno).fecha) }} 
                     <span class="payment-type">({{ getPaymentLabel(getUltimoPago(alumno)) }})</span>
-                    <span v-if="getUltimoPago(alumno).monto" class="payment-amount">
-                      <span class="separator">|</span> ${{ getUltimoPago(alumno).monto }}
+                    <span v-if="getDisplayedPaymentAmount(getUltimoPago(alumno))" class="payment-amount">
+                      <span class="separator">|</span> ${{ getDisplayedPaymentAmount(getUltimoPago(alumno)) }}
                     </span>
                   </p>
                   <p v-else class="payment-info">Sin pagos registrados</p>
@@ -528,7 +569,7 @@ async function guardarPagoEditado() {
                       <span class="mini-date">{{ formatDate(pago.fecha) }}</span>
                       <span class="mini-type">{{ getPaymentLabel(pago) }}</span>
                       <span v-if="pago.membresia" class="mini-membresia">{{ pago.membresia.nombre }}</span>
-                      <span v-if="pago.monto" class="mini-monto">${{ pago.monto }}</span>
+                      <span v-if="getDisplayedPaymentAmount(pago)" class="mini-monto">${{ getDisplayedPaymentAmount(pago) }}</span>
                     </div>
                   </div>
                 </div>
@@ -656,7 +697,7 @@ async function guardarPagoEditado() {
           </div>
 
           <div class="form-group">
-            <label for="edit-monto">Monto *</label>
+            <label for="edit-monto">Monto final informado *</label>
             <input
               id="edit-monto"
               v-model="pagoActual.monto"
@@ -666,6 +707,14 @@ async function guardarPagoEditado() {
               :disabled="isPromisePayment(pagoActual.tipoPago)"
               placeholder="Ej: 38000"
             />
+            <small v-if="isDiscountPayment(pagoActual.tipoPago)">
+              Se muestra como dato informativo. El monto contable queda atado al valor de la membresía.
+            </small>
+          </div>
+
+          <div class="form-group" v-if="isDiscountPayment(pagoActual.tipoPago)">
+            <label>Monto contable para estadísticas</label>
+            <div class="payment-edit-summary">${{ getSelectedMembershipPrice(pagoActual.membresiaId).toLocaleString() }}</div>
           </div>
 
           <div v-if="error" class="error-message">
