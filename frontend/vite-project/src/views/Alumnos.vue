@@ -21,6 +21,7 @@ const nuevoAlumno = ref({
   apellido: "",
   celular: "",
   fechaPago: "",
+  mesQueAbona: new Date().getMonth() + 1,
   tipoPago: "efectivo",
   membresiaId: "", // ID de la membresía seleccionada
   montoDescuento: "",
@@ -28,6 +29,7 @@ const nuevoAlumno = ref({
 })
 const nuevoPago = ref({
   fechaPago: "",
+  mesQueAbona: new Date().getMonth() + 1,
   tipoPago: "efectivo",
   membresiaId: "",
   montoDescuento: "",
@@ -50,6 +52,21 @@ const isLoading = ref(false)
 const currentUser = ref(null)
 const searchQuery = ref("")
 const sortOrder = ref("az")
+const currentYear = new Date().getFullYear()
+const mesesQueAbona = [
+  { value: 1, label: "Enero" },
+  { value: 2, label: "Febrero" },
+  { value: 3, label: "Marzo" },
+  { value: 4, label: "Abril" },
+  { value: 5, label: "Mayo" },
+  { value: 6, label: "Junio" },
+  { value: 7, label: "Julio" },
+  { value: 8, label: "Agosto" },
+  { value: 9, label: "Septiembre" },
+  { value: 10, label: "Octubre" },
+  { value: 11, label: "Noviembre" },
+  { value: 12, label: "Diciembre" }
+]
 
 function normalizePaymentType(tipo) {
   const normalized = String(tipo || "").trim().toLowerCase()
@@ -81,6 +98,22 @@ function getPaymentAmount(pago) {
   if (!pago) return 0
   if (typeof pago.monto === "number") return pago.monto
   return Number(pago.monto || pago.membresia?.precio || 0)
+}
+
+function isSameCalendarDay(firstDate, secondDate) {
+  const first = new Date(firstDate)
+  const second = new Date(secondDate)
+
+  if (Number.isNaN(first.getTime()) || Number.isNaN(second.getTime())) return false
+
+  return first.getFullYear() === second.getFullYear()
+    && first.getMonth() === second.getMonth()
+    && first.getDate() === second.getDate()
+}
+
+function findSameDayPayment(alumno, fechaPagoDate) {
+  if (!alumno?.historialPagos?.length) return null
+  return alumno.historialPagos.find((pago) => isSameCalendarDay(pago.fecha, fechaPagoDate)) || null
 }
 
 function hasPendingPartialPayment(alumno) {
@@ -325,6 +358,7 @@ function openModal() {
     apellido: "",
     celular: "",
     fechaPago: "", // Not used for editing but needed for object structure if any
+    mesQueAbona: new Date().getMonth() + 1,
     tipoPago: "efectivo",
     membresiaId: membresias.value.find(m => m.nombre.includes('3 días'))?._id || membresias.value[0]?._id || "",
     montoDescuento: "",
@@ -355,9 +389,11 @@ function closeModal() {
     apellido: "",
     celular: "",
     fechaPago: "",
+    mesQueAbona: new Date().getMonth() + 1,
     tipoPago: "efectivo",
     membresiaId: membresias.value.find(m => m.nombre.includes('3 días'))?._id || membresias.value[0]?._id || "",
     montoDescuento: "",
+    medioDescuento: "transferencia",
   }
 }
 
@@ -449,6 +485,8 @@ async function agregarAlumno() {
 
   const historial = [{
     fecha: fechaPagoDate,
+    mesQueAbona: Number(nuevoAlumno.value.mesQueAbona || (fechaPagoDate.getMonth() + 1)),
+    anioQueAbona: currentYear,
     tipo: isPromisePayment(nuevoAlumno.value.tipoPago) ? "promesa de pago" : nuevoAlumno.value.tipoPago,
     detalle: isPromisePayment(nuevoAlumno.value.tipoPago)
       ? "Promesa de Pago"
@@ -511,6 +549,7 @@ function openPaymentModal(alumno) {
   
   nuevoPago.value = {
     fechaPago: formatDateAR(new Date()),
+    mesQueAbona: new Date().getMonth() + 1,
     tipoPago: "efectivo",
     membresiaId: defaultMembresiaId,
     montoDescuento: "",
@@ -536,6 +575,7 @@ function closePaymentModal() {
   error.value = ""
   nuevoPago.value = {
     fechaPago: "",
+    mesQueAbona: new Date().getMonth() + 1,
     tipoPago: "efectivo",
     membresiaId: "",
     montoDescuento: "",
@@ -620,9 +660,22 @@ async function registrarPago() {
   }
 
   const completaConMontoExacto = nuevoPago.value.pagoParcial && montoCalculado === montoBase
+  const sameDayPayment = findSameDayPayment(alumnoSeleccionado.value, fechaPagoDate)
+  let allowDuplicateSameDay = false
+
+  if (sameDayPayment) {
+    const confirmed = confirm("Este alumno ya tiene un pago cargado en esa misma fecha. ¿Querés registrar otro pago igualmente?")
+    if (!confirmed) {
+      error.value = "No se registró el pago duplicado."
+      return
+    }
+    allowDuplicateSameDay = true
+  }
 
   const nuevoPagoObj = {
     fecha: fechaPagoDate,
+    mesQueAbona: Number(nuevoPago.value.mesQueAbona || (fechaPagoDate.getMonth() + 1)),
+    anioQueAbona: currentYear,
     tipo: isPromisePayment(tipoFinal) ? "promesa de pago" : tipoFinal,
     detalle: completaConMontoExacto
       ? "Completa pago parcial"
@@ -648,7 +701,8 @@ async function registrarPago() {
       nombre: selectedM.nombre,
       precio: selectedM.precio
     } : null,
-    monto: isPromisePayment(tipoFinal) ? 0 : montoCalculado
+    monto: isPromisePayment(tipoFinal) ? 0 : montoCalculado,
+    allowDuplicateSameDay
   }
   
   try {
@@ -670,7 +724,38 @@ async function registrarPago() {
     closePaymentModal()
   } catch (e) {
     console.error(e)
-    error.value = "Error al registrar pago en MongoDB"
+    if (e.status === 409 && e.code === "DUPLICATE_PAYMENT_SAME_DAY") {
+      const confirmed = confirm("El sistema detectó que ya existe un pago ese mismo día. ¿Querés guardarlo igual?")
+      if (!confirmed) {
+        error.value = "No se registró el pago duplicado."
+        return
+      }
+
+      try {
+        await MongoService.addPago(alumnoSeleccionado.value._id || alumnoSeleccionado.value.id, {
+          ...nuevoPagoObj,
+          allowDuplicateSameDay: true
+        })
+
+        if (!alumnos.value[alumnoIndex].historialPagos) {
+          alumnos.value[alumnoIndex].historialPagos = []
+        }
+
+        alumnos.value[alumnoIndex].historialPagos.push({
+          ...nuevoPagoObj,
+          allowDuplicateSameDay: undefined
+        })
+        alumnos.value[alumnoIndex].historialPagos.sort(comparePagosDesc)
+        closePaymentModal()
+        return
+      } catch (retryError) {
+        console.error(retryError)
+        error.value = retryError.message || "Error al registrar pago en MongoDB"
+        return
+      }
+    }
+
+    error.value = e.message || "Error al registrar pago en MongoDB"
   } finally {
     isLoading.value = false
   }
@@ -1006,6 +1091,20 @@ async function confirmarDelegacion() {
             </div>
 
           <div class="form-group">
+            <label for="mesQueAbonaNuevo">Mes que abona *</label>
+            <select
+              id="mesQueAbonaNuevo"
+              v-model="nuevoAlumno.mesQueAbona"
+              required
+              class="select-input"
+            >
+              <option v-for="mes in mesesQueAbona" :key="mes.value" :value="mes.value">
+                {{ mes.label }} {{ currentYear }}
+              </option>
+            </select>
+          </div>
+
+          <div class="form-group">
             <label for="tipoPagoNuevo">Tipo de Pago *</label>
             <select
               id="tipoPagoNuevo"
@@ -1096,6 +1195,20 @@ async function confirmarDelegacion() {
               :max="new Date().toISOString().slice(0,10)"
               @update:model-value="value => nuevoPago.fechaPago = value"
             />
+          </div>
+
+          <div class="form-group">
+            <label for="mesQueAbonaPago">Mes que abona *</label>
+            <select
+              id="mesQueAbonaPago"
+              v-model="nuevoPago.mesQueAbona"
+              required
+              class="select-input"
+            >
+              <option v-for="mes in mesesQueAbona" :key="mes.value" :value="mes.value">
+                {{ mes.label }} {{ currentYear }}
+              </option>
+            </select>
           </div>
 
           <div class="form-group checkbox-group">

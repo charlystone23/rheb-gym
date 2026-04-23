@@ -216,7 +216,14 @@ export const MongoService = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(pago)
             });
-            if (!response.ok) throw new Error('Error al registrar pago');
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                const err = new Error(errorData.error || 'Error al registrar pago');
+                err.status = response.status;
+                err.code = errorData.code;
+                err.data = errorData;
+                throw err;
+            }
             return await response.json();
         } catch (error) {
             console.error("API Error:", error);
@@ -264,8 +271,12 @@ export const MongoService = {
                 body: JSON.stringify(pago)
             });
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Error al actualizar pago');
+                const errorData = await response.json().catch(() => ({}));
+                const err = new Error(errorData.error || 'Error al actualizar pago');
+                err.status = response.status;
+                err.code = errorData.code;
+                err.data = errorData;
+                throw err;
             }
             return await response.json();
         } catch (error) {

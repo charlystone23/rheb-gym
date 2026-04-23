@@ -129,7 +129,7 @@ function comparePagosDesc(a, b) {
 }
 
 function hasPendingPartialPayment(alumno, referenceDate = new Date()) {
-  const ultimoPago = getUltimoPagoHastaFecha(alumno, referenceDate)
+  const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
   return Boolean(ultimoPago?.esParcial && Number(ultimoPago?.saldoPendiente || 0) > 0)
 }
 
@@ -139,8 +139,59 @@ function getPaymentAmount(pago) {
   return Number(pago.monto || pago.membresia?.precio || 0)
 }
 
+function getPagoPeriodoInfo(pago) {
+  if (!pago) return null
+
+  const fechaPago = new Date(pago.fecha)
+  if (Number.isNaN(fechaPago.getTime())) return null
+
+  const month = Number(pago.mesQueAbona || (fechaPago.getMonth() + 1))
+  const year = Number(pago.anioQueAbona || fechaPago.getFullYear())
+
+  if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year)) {
+    return null
+  }
+
+  return {
+    month,
+    year,
+    date: new Date(year, month - 1, 1)
+  }
+}
+
+function getUltimoPagoHastaPeriodo(alumno, referenceDate = new Date()) {
+  if (!alumno.historialPagos || alumno.historialPagos.length === 0) return null
+
+  const referenceMonth = referenceDate.getMonth() + 1
+  const referenceYear = referenceDate.getFullYear()
+
+  return [...alumno.historialPagos]
+    .filter((pago) => {
+      const periodo = getPagoPeriodoInfo(pago)
+      if (!periodo) return false
+      return periodo.year < referenceYear || (periodo.year === referenceYear && periodo.month <= referenceMonth)
+    })
+    .sort((a, b) => {
+      const periodoA = getPagoPeriodoInfo(a)
+      const periodoB = getPagoPeriodoInfo(b)
+      const yearDiff = (periodoB?.year || 0) - (periodoA?.year || 0)
+      if (yearDiff !== 0) return yearDiff
+
+      const monthDiff = (periodoB?.month || 0) - (periodoA?.month || 0)
+      if (monthDiff !== 0) return monthDiff
+
+      return comparePagosDesc(a, b)
+    })[0] || null
+}
+
+function isPagoInPeriodRange(pago, startDate, endDate) {
+  const periodo = getPagoPeriodoInfo(pago)
+  if (!periodo) return false
+  return periodo.date >= startDate && periodo.date <= endDate
+}
+
 function getEstimatedAmountForAlumno(alumno, referenceDate = new Date()) {
-  const ultimoPago = getUltimoPagoHastaFecha(alumno, referenceDate)
+  const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
   if (!ultimoPago) return 0
 
   if (typeof ultimoPago.montoObjetivo === "number" && ultimoPago.montoObjetivo > 0) {
@@ -155,7 +206,7 @@ function getEstimatedAmountForAlumno(alumno, referenceDate = new Date()) {
 }
 
 function getPaymentStatus(alumno, referenceDate = new Date()) {
-  const ultimoPago = getUltimoPagoHastaFecha(alumno, referenceDate)
+  const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
   if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno, referenceDate))) {
     return "red"
   }
@@ -167,8 +218,8 @@ function getPaymentStatus(alumno, referenceDate = new Date()) {
   if (!ultimoPago) {
     nextPaymentDate = new Date(alumno.fechaRegistro || alumno.createdAt || today)
   } else {
-    nextPaymentDate = new Date(ultimoPago.fecha)
-    nextPaymentDate.setDate(nextPaymentDate.getDate() + 30)
+    const periodo = getPagoPeriodoInfo(ultimoPago)
+    nextPaymentDate = periodo?.date ? new Date(periodo.date.getFullYear(), periodo.date.getMonth() + 1, 1) : new Date(ultimoPago.fecha)
   }
   nextPaymentDate.setHours(0, 0, 0, 0)
 
@@ -255,8 +306,7 @@ const statsPorEntrenador = computed(() => {
     let montoReal = 0
     alumnosActivosEnMes.forEach((alumno) => {
       alumno.historialPagos.forEach((pago) => {
-        const fechaPago = new Date(pago.fecha)
-        if (fechaPago >= startDate && fechaPago <= endDate) {
+        if (isPagoInPeriodRange(pago, startDate, endDate)) {
           montoReal += getPaymentAmount(pago)
         }
       })
@@ -298,8 +348,8 @@ const statsGenerales = computed(() => {
       .forEach((alumno) => {
       montoEstimadoMes += getEstimatedAmountForAlumno(alumno, end)
       alumno.historialPagos.forEach((pago) => {
-        const fechaPago = new Date(pago.fecha)
-        if (fechaPago.getMonth() === selectedMonth.value && fechaPago.getFullYear() === selectedYear.value) {
+        const periodo = getPagoPeriodoInfo(pago)
+        if (periodo?.month === selectedMonth.value + 1 && periodo?.year === selectedYear.value) {
           montoRealMes += getPaymentAmount(pago)
         }
       })

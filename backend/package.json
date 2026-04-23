@@ -6,7 +6,9 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon index.js",
     "start": "node index.js",
-    "seed": "node seed.js"
+    "seed": "node seed.js",
+    "migrate:payment-periods": "node migratePagoPeriodos.js",
+    "migrate:payment-periods:apply": "node migratePagoPeriodos.js --apply"
   },
   "keywords": [],
   "author": "",

@@ -137,6 +137,8 @@ const HorarioSchema = new mongoose.Schema({
 
 const PagoSchema = new mongoose.Schema({
     fecha: { type: Date, required: true },
+    mesQueAbona: { type: Number, min: 1, max: 12, default: null },
+    anioQueAbona: { type: Number, default: null },
     tipo: { type: String, required: true }, // 'efectivo', 'transferencia', 'descuento', 'promesa de pago'
     detalle: { type: String, default: "" },
     medio: { type: String, default: "" },
@@ -576,7 +578,12 @@ app.get('/api/alumnos', async (req, res) => {
 app.post('/api/alumnos', async (req, res) => {
     try {
         // req.body debe incluir 'entrenador' (ID)
-        const nuevoAlumno = new Alumno(req.body);
+        const payload = { ...req.body };
+        if (Array.isArray(payload.historialPagos)) {
+            payload.historialPagos = payload.historialPagos.map((pago) => normalizePagoPeriodo(pago));
+        }
+
+        const nuevoAlumno = new Alumno(payload);
         if (!nuevoAlumno.periodosActividad || nuevoAlumno.periodosActividad.length === 0) {
             nuevoAlumno.periodosActividad = [{
                 inicio: nuevoAlumno.fechaRegistro || new Date(),
@@ -844,6 +851,55 @@ async function getDiasPermitidos(alumno) {
     return memb?.diasPorSemana ?? null;
 }
 
+function getDateKey(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function findSameDayPago(alumno, fecha, excludedPagoId = null) {
+    if (!alumno?.historialPagos?.length) return null;
+
+    const targetKey = getDateKey(fecha);
+    if (!targetKey) return null;
+
+    return alumno.historialPagos.find((existingPago) => {
+        if (excludedPagoId && existingPago._id?.toString() === excludedPagoId.toString()) {
+            return false;
+        }
+
+        return getDateKey(existingPago.fecha) === targetKey;
+    }) || null;
+}
+
+function normalizePagoPeriodo(pago, fallbackPago = null) {
+    const normalizedPago = { ...pago };
+    const fechaBase = normalizedPago.fecha ?? fallbackPago?.fecha ?? null;
+    const parsedFecha = fechaBase ? new Date(fechaBase) : null;
+
+    const mesCandidato = Number(normalizedPago.mesQueAbona ?? fallbackPago?.mesQueAbona);
+    if (Number.isInteger(mesCandidato) && mesCandidato >= 1 && mesCandidato <= 12) {
+        normalizedPago.mesQueAbona = mesCandidato;
+    } else if (parsedFecha && !Number.isNaN(parsedFecha.getTime())) {
+        normalizedPago.mesQueAbona = parsedFecha.getMonth() + 1;
+    } else {
+        normalizedPago.mesQueAbona = null;
+    }
+
+    const anioCandidato = Number(normalizedPago.anioQueAbona ?? fallbackPago?.anioQueAbona);
+    if (Number.isInteger(anioCandidato) && anioCandidato > 2000) {
+        normalizedPago.anioQueAbona = anioCandidato;
+    } else {
+        normalizedPago.anioQueAbona = new Date().getFullYear();
+    }
+
+    return normalizedPago;
+}
+
 // POST /api/horarios/:id/asignaciones — assign a student to a day+hour slot
 app.post('/api/horarios/:id/asignaciones', async (req, res) => {
     try {
@@ -1055,12 +1111,23 @@ app.get('/api/horarios/limits/slots', async (req, res) => {
 app.post('/api/alumnos/:id/pagos', async (req, res) => {
     try {
         const { id } = req.params;
-        const pago = req.body;
+        const { allowDuplicateSameDay, ...pagoPayload } = req.body;
         const alumnoExistente = await Alumno.findById(id);
 
         if (!alumnoExistente) return res.status(404).json({ error: 'Alumno no encontrado' });
         if (alumnoExistente.estado !== 'activo') {
             return res.status(400).json({ error: 'No se pueden registrar pagos en un alumno inactivo. Reactivalo primero.' });
+        }
+
+        const pago = normalizePagoPeriodo(pagoPayload);
+        const sameDayPago = findSameDayPago(alumnoExistente, pago.fecha);
+        if (sameDayPago && !allowDuplicateSameDay) {
+            return res.status(409).json({
+                error: 'El alumno ya tiene un pago registrado en esa fecha.',
+                code: 'DUPLICATE_PAYMENT_SAME_DAY',
+                existingPagoId: sameDayPago._id,
+                existingPagoDate: sameDayPago.fecha
+            });
         }
 
         const alumno = await Alumno.findByIdAndUpdate(
@@ -1090,8 +1157,22 @@ app.put('/api/alumnos/:id/pagos/:pagoId', async (req, res) => {
         const pago = alumno.historialPagos.id(pagoId);
         if (!pago) return res.status(404).json({ error: 'Pago no encontrado' });
 
+        const normalizedPayload = normalizePagoPeriodo(req.body, pago);
+        const fechaObjetivo = normalizedPayload.fecha ?? pago.fecha;
+        const sameDayPago = findSameDayPago(alumno, fechaObjetivo, pagoId);
+        if (sameDayPago && !req.body.allowDuplicateSameDay) {
+            return res.status(409).json({
+                error: 'El alumno ya tiene otro pago registrado en esa fecha.',
+                code: 'DUPLICATE_PAYMENT_SAME_DAY',
+                existingPagoId: sameDayPago._id,
+                existingPagoDate: sameDayPago.fecha
+            });
+        }
+
         const allowedFields = [
             'fecha',
+            'mesQueAbona',
+            'anioQueAbona',
             'tipo',
             'detalle',
             'medio',
@@ -1104,8 +1185,8 @@ app.put('/api/alumnos/:id/pagos/:pagoId', async (req, res) => {
         ];
 
         allowedFields.forEach((field) => {
-            if (req.body[field] !== undefined) {
-                pago[field] = req.body[field];
+            if (normalizedPayload[field] !== undefined) {
+                pago[field] = normalizedPayload[field];
             }
         });
 

@@ -20,11 +20,27 @@ const entrenadorPagoEditando = ref(null)
 const pagoActual = ref({
   pagoId: "",
   fechaPago: "",
+  mesQueAbona: new Date().getMonth() + 1,
   tipoPago: "efectivo",
   membresiaId: "",
   monto: "",
   medio: "transferencia"
 })
+const currentYear = new Date().getFullYear()
+const mesesQueAbona = [
+  { value: 1, label: "Enero" },
+  { value: 2, label: "Febrero" },
+  { value: 3, label: "Marzo" },
+  { value: 4, label: "Abril" },
+  { value: 5, label: "Mayo" },
+  { value: 6, label: "Junio" },
+  { value: 7, label: "Julio" },
+  { value: 8, label: "Agosto" },
+  { value: 9, label: "Septiembre" },
+  { value: 10, label: "Octubre" },
+  { value: 11, label: "Noviembre" },
+  { value: 12, label: "Diciembre" }
+]
 
 function normalizePaymentType(tipo) {
   const normalized = String(tipo || "").trim().toLowerCase()
@@ -65,6 +81,26 @@ function comparePagosDesc(a, b) {
   if (b.esParcial && !a.esParcial) return -1
 
   return 0
+}
+
+function isSameCalendarDay(firstDate, secondDate) {
+  const first = new Date(firstDate)
+  const second = new Date(secondDate)
+
+  if (Number.isNaN(first.getTime()) || Number.isNaN(second.getTime())) return false
+
+  return first.getFullYear() === second.getFullYear()
+    && first.getMonth() === second.getMonth()
+    && first.getDate() === second.getDate()
+}
+
+function findSameDayPayment(alumno, fechaPagoDate, excludedPagoId = null) {
+  if (!alumno?.historialPagos?.length) return null
+
+  return alumno.historialPagos.find((pago) => {
+    if (excludedPagoId && String(pago._id || pago.id) === String(excludedPagoId)) return false
+    return isSameCalendarDay(pago.fecha, fechaPagoDate)
+  }) || null
 }
 
 function hasPendingPartialPayment(alumno) {
@@ -225,6 +261,7 @@ function closeEditPaymentModal() {
   pagoActual.value = {
     pagoId: "",
     fechaPago: "",
+    mesQueAbona: new Date().getMonth() + 1,
     tipoPago: "efectivo",
     membresiaId: "",
     monto: "",
@@ -251,6 +288,7 @@ function openEditPaymentModal(entrenador, alumno) {
   pagoActual.value = {
     pagoId: ultimoPago._id,
     fechaPago: formatDateAR(ultimoPago.fecha),
+    mesQueAbona: Number(ultimoPago.mesQueAbona || (new Date(ultimoPago.fecha).getMonth() + 1)),
     tipoPago: normalizePaymentType(ultimoPago.tipo || ultimoPago.detalle) || "efectivo",
     membresiaId,
     monto: String(ultimoPago.monto ?? ultimoPago.membresia?.precio ?? ""),
@@ -292,9 +330,22 @@ async function guardarPagoEditado() {
   }
 
   const tipoNormalizado = normalizePaymentType(pagoActual.value.tipoPago)
+  const sameDayPayment = findSameDayPayment(alumnoPagoEditando.value, fechaPagoDate, pagoActual.value.pagoId)
+  let allowDuplicateSameDay = false
+
+  if (sameDayPayment) {
+    const confirmed = confirm("Este alumno ya tiene otro pago cargado en esa misma fecha. ¿Querés guardar la edición igualmente?")
+    if (!confirmed) {
+      error.value = "No se guardó el pago duplicado."
+      return
+    }
+    allowDuplicateSameDay = true
+  }
 
   const payload = {
     fecha: fechaPagoDate,
+    mesQueAbona: Number(pagoActual.value.mesQueAbona || (fechaPagoDate.getMonth() + 1)),
+    anioQueAbona: currentYear,
     tipo: tipoNormalizado,
     detalle: isPromisePayment(tipoNormalizado)
       ? "Promesa de Pago"
@@ -311,7 +362,8 @@ async function guardarPagoEditado() {
     esParcial: ultimoPago?.esParcial || false,
     completaParcial: ultimoPago?.completaParcial || false,
     montoObjetivo: ultimoPago?.montoObjetivo ?? null,
-    saldoPendiente: ultimoPago?.saldoPendiente ?? 0
+    saldoPendiente: ultimoPago?.saldoPendiente ?? 0,
+    allowDuplicateSameDay
   }
 
   try {
@@ -340,6 +392,45 @@ async function guardarPagoEditado() {
     closeEditPaymentModal()
   } catch (e) {
     console.error("Error updating payment:", e)
+    if (e.status === 409 && e.code === "DUPLICATE_PAYMENT_SAME_DAY") {
+      const confirmed = confirm("El sistema detectó otro pago en esa misma fecha. ¿Querés guardar la edición igualmente?")
+      if (!confirmed) {
+        error.value = "No se guardó el pago duplicado."
+        return
+      }
+
+      try {
+        const alumnoActualizado = await MongoService.updatePago(
+          getAlumnoId(alumnoPagoEditando.value),
+          pagoActual.value.pagoId,
+          {
+            ...payload,
+            allowDuplicateSameDay: true
+          }
+        )
+
+        entrenadores.value = entrenadores.value.map((entrenador) => {
+          if (entrenador._id !== entrenadorPagoEditando.value?._id) return entrenador
+
+          return {
+            ...entrenador,
+            alumnos: (entrenador.alumnos || []).map((alumno) =>
+              getAlumnoId(alumno) === getAlumnoId(alumnoPagoEditando.value)
+                ? alumnoActualizado
+                : alumno
+            )
+          }
+        })
+
+        closeEditPaymentModal()
+        return
+      } catch (retryError) {
+        console.error("Error updating payment:", retryError)
+        error.value = retryError.message || "No se pudo actualizar el pago."
+        return
+      }
+    }
+
     error.value = e.message || "No se pudo actualizar el pago."
   } finally {
     isSavingPayment.value = false
@@ -525,6 +616,15 @@ async function guardarPagoEditado() {
               v-model="pagoActual.fechaPago"
               placeholder="dd/mm/aaaa"
             />
+          </div>
+
+          <div class="form-group">
+            <label for="edit-mes-que-abona">Mes que abona *</label>
+            <select id="edit-mes-que-abona" v-model="pagoActual.mesQueAbona">
+              <option v-for="mes in mesesQueAbona" :key="mes.value" :value="mes.value">
+                {{ mes.label }} {{ currentYear }}
+              </option>
+            </select>
           </div>
 
           <div class="form-group">
