@@ -133,6 +133,27 @@ function hasPendingPartialPayment(alumno, referenceDate = new Date()) {
   return Boolean(ultimoPago?.esParcial && Number(ultimoPago?.saldoPendiente || 0) > 0)
 }
 
+function getPaymentAmount(pago) {
+  if (!pago) return 0
+  if (typeof pago.monto === "number") return pago.monto
+  return Number(pago.monto || pago.membresia?.precio || 0)
+}
+
+function getEstimatedAmountForAlumno(alumno, referenceDate = new Date()) {
+  const ultimoPago = getUltimoPagoHastaFecha(alumno, referenceDate)
+  if (!ultimoPago) return 0
+
+  if (typeof ultimoPago.montoObjetivo === "number" && ultimoPago.montoObjetivo > 0) {
+    return ultimoPago.montoObjetivo
+  }
+
+  if (typeof ultimoPago.membresia?.precio === "number" && ultimoPago.membresia.precio > 0) {
+    return ultimoPago.membresia.precio
+  }
+
+  return getPaymentAmount(ultimoPago)
+}
+
 function getPaymentStatus(alumno, referenceDate = new Date()) {
   const ultimoPago = getUltimoPagoHastaFecha(alumno, referenceDate)
   if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno, referenceDate))) {
@@ -219,7 +240,11 @@ const statsPorEntrenador = computed(() => {
         alDia,
         proximoVencer,
         deuda,
-        saldoHistorico: 0,
+        montoReal: 0,
+        montoEstimado: alumnosActivosEnMes.reduce(
+          (acc, alumno) => acc + getEstimatedAmountForAlumno(alumno, monthBounds.end),
+          0
+        ),
         porcentajeActivos: totalAlumnos > 0 ? Math.round(((alDia + proximoVencer) / totalAlumnos) * 100) : 0
       }
     }
@@ -227,15 +252,20 @@ const statsPorEntrenador = computed(() => {
     startDate.setHours(0, 0, 0, 0)
     endDate.setHours(23, 59, 59, 999)
 
-    let saldoHistorico = 0
+    let montoReal = 0
     alumnosActivosEnMes.forEach((alumno) => {
       alumno.historialPagos.forEach((pago) => {
         const fechaPago = new Date(pago.fecha)
         if (fechaPago >= startDate && fechaPago <= endDate) {
-          saldoHistorico += pago.monto || 0
+          montoReal += getPaymentAmount(pago)
         }
       })
     })
+
+    const montoEstimado = alumnosActivosEnMes.reduce(
+      (acc, alumno) => acc + getEstimatedAmountForAlumno(alumno, endDate),
+      0
+    )
 
     return {
       id: entrenador._id,
@@ -244,7 +274,8 @@ const statsPorEntrenador = computed(() => {
       alDia,
       proximoVencer,
       deuda,
-      saldoHistorico,
+      montoReal,
+      montoEstimado,
       porcentajeActivos: totalAlumnos > 0 ? Math.round(((alDia + proximoVencer) / totalAlumnos) * 100) : 0
     }
   })
@@ -258,30 +289,33 @@ const statsGenerales = computed(() => {
   const proximoVencer = statsPorEntrenador.value.reduce((acc, stat) => acc + stat.proximoVencer, 0)
   const deuda = statsPorEntrenador.value.reduce((acc, stat) => acc + stat.deuda, 0)
 
-  let ingresosMes = 0
+  let montoRealMes = 0
+  let montoEstimadoMes = 0
   entrenadoresVisibles.value.forEach((entrenador) => {
     const { start, end } = getMonthBounds(selectedYear.value, selectedMonth.value)
     ;(entrenador.alumnos || [])
       .filter((alumno) => wasAlumnoActiveInRange(alumno, start, end))
       .forEach((alumno) => {
+      montoEstimadoMes += getEstimatedAmountForAlumno(alumno, end)
       alumno.historialPagos.forEach((pago) => {
         const fechaPago = new Date(pago.fecha)
         if (fechaPago.getMonth() === selectedMonth.value && fechaPago.getFullYear() === selectedYear.value) {
-          ingresosMes += pago.monto || 0
+          montoRealMes += getPaymentAmount(pago)
         }
       })
     })
   })
 
   const gastosMes = expenses.value.reduce((acc, expense) => acc + (Number(expense.monto) || 0), 0)
-  const recaudacionNeta = ingresosMes - gastosMes
+  const recaudacionNeta = montoRealMes - gastosMes
 
   return {
     totalAlumnos,
     alDia,
     proximoVencer,
     deuda,
-    ingresosMes,
+    montoRealMes,
+    montoEstimadoMes,
     gastosMes,
     recaudacionNeta,
     cantidadGastos: expenses.value.length,
@@ -358,8 +392,12 @@ function goToExpenses() {
           <span class="value">{{ statsGenerales.deuda }}</span>
         </div>
         <div class="summary-card income">
-          <span class="label">Ingresos del Mes</span>
-          <span class="value">${{ statsGenerales.ingresosMes.toLocaleString() }}</span>
+          <span class="label">Monto Real del Mes</span>
+          <span class="value">${{ statsGenerales.montoRealMes.toLocaleString() }}</span>
+        </div>
+        <div class="summary-card income">
+          <span class="label">Monto Estimado del Mes</span>
+          <span class="value">${{ statsGenerales.montoEstimadoMes.toLocaleString() }}</span>
         </div>
         <div class="summary-card expense">
           <span class="label">Gastos del Mes</span>
@@ -428,8 +466,13 @@ function goToExpenses() {
           </div>
 
           <div class="saldo-display">
-            <span class="saldo-label">Ingresos en período:</span>
-            <span class="saldo-value">${{ stat.saldoHistorico.toLocaleString() }}</span>
+            <span class="saldo-label">Monto real en período:</span>
+            <span class="saldo-value">${{ stat.montoReal.toLocaleString() }}</span>
+          </div>
+
+          <div class="saldo-display">
+            <span class="saldo-label">Monto estimado:</span>
+            <span class="saldo-value">${{ stat.montoEstimado.toLocaleString() }}</span>
           </div>
 
           <div class="stat-rows">
