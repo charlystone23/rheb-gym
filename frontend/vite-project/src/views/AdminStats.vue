@@ -520,7 +520,7 @@ function goToExpenses() {
           <span class="value">{{ statsGenerales.deuda }}</span>
         </div>
         <div class="summary-card income">
-          <span class="label">Monto Real del Mes</span>
+          <span class="label">Monto Actual</span>
           <span class="value">${{ statsGenerales.montoRealMes.toLocaleString() }}</span>
         </div>
         <div class="summary-card income">
@@ -594,12 +594,12 @@ function goToExpenses() {
           </div>
 
           <div class="saldo-display">
-            <span class="saldo-label">Monto real en período:</span>
+            <span class="saldo-label">Monto actual:</span>
             <span class="saldo-value">${{ stat.montoReal.toLocaleString() }}</span>
           </div>
 
           <div class="saldo-display">
-            <span class="saldo-label">Monto actual:</span>
+            <span class="saldo-label">Monto total fin de mes:</span>
             <span class="saldo-value">${{ stat.montoEstimado.toLocaleString() }}</span>
           </div>
 
