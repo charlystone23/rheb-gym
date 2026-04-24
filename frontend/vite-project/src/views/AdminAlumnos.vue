@@ -15,8 +15,10 @@ const expandedHistory = ref({})
 const membresias = ref([])
 const showEditPaymentModal = ref(false)
 const isSavingPayment = ref(false)
+const isDeletingPayment = ref(false)
 const alumnoPagoEditando = ref(null)
 const entrenadorPagoEditando = ref(null)
+const pagoOriginalEditando = ref(null)
 const pagoActual = ref({
   pagoId: "",
   fechaPago: "",
@@ -290,8 +292,10 @@ async function reactivarAlumno(entrenador, alumno) {
 function closeEditPaymentModal() {
   showEditPaymentModal.value = false
   isSavingPayment.value = false
+  isDeletingPayment.value = false
   alumnoPagoEditando.value = null
   entrenadorPagoEditando.value = null
+  pagoOriginalEditando.value = null
   pagoActual.value = {
     pagoId: "",
     fechaPago: "",
@@ -304,31 +308,47 @@ function closeEditPaymentModal() {
   }
 }
 
-function openEditPaymentModal(entrenador, alumno) {
-  const ultimoPago = getUltimoPago(alumno)
-  if (!ultimoPago?._id) {
+function replaceAlumnoInTrainer(entrenadorId, alumnoActualizado) {
+  entrenadores.value = entrenadores.value.map((entrenador) => {
+    if (entrenador._id !== entrenadorId) return entrenador
+
+    return {
+      ...entrenador,
+      alumnos: (entrenador.alumnos || []).map((alumno) =>
+        getAlumnoId(alumno) === getAlumnoId(alumnoActualizado)
+          ? alumnoActualizado
+          : alumno
+      )
+    }
+  })
+}
+
+function openEditPaymentModal(entrenador, alumno, pagoSeleccionado = null) {
+  const pagoAEditar = pagoSeleccionado || getUltimoPago(alumno)
+  if (!pagoAEditar?._id) {
     error.value = "Este alumno no tiene pagos para editar."
     return
   }
 
   const membresiaId =
-    ultimoPago.membresia?.id ||
-    ultimoPago.membresia?._id ||
-    membresias.value.find((m) => m.nombre === ultimoPago.membresia?.nombre)?._id ||
+    pagoAEditar.membresia?.id ||
+    pagoAEditar.membresia?._id ||
+    membresias.value.find((m) => m.nombre === pagoAEditar.membresia?.nombre)?._id ||
     membresias.value[0]?._id ||
     ""
 
   entrenadorPagoEditando.value = entrenador
   alumnoPagoEditando.value = alumno
+  pagoOriginalEditando.value = pagoAEditar
   pagoActual.value = {
-    pagoId: ultimoPago._id,
-    fechaPago: formatDateAR(ultimoPago.fecha),
-    mesQueAbona: Number(ultimoPago.mesQueAbona || (new Date(ultimoPago.fecha).getMonth() + 1)),
-    tipoPago: normalizePaymentType(ultimoPago.tipo || ultimoPago.detalle) || "efectivo",
+    pagoId: pagoAEditar._id,
+    fechaPago: formatDateAR(pagoAEditar.fecha),
+    mesQueAbona: Number(pagoAEditar.mesQueAbona || (new Date(pagoAEditar.fecha).getMonth() + 1)),
+    tipoPago: normalizePaymentType(pagoAEditar.tipo || pagoAEditar.detalle) || "efectivo",
     membresiaId,
-    monto: String(ultimoPago.montoInformado ?? ultimoPago.monto ?? ultimoPago.membresia?.precio ?? ""),
-    montoContable: String(ultimoPago.monto ?? ultimoPago.membresia?.precio ?? ""),
-    medio: ultimoPago.medio || "transferencia"
+    monto: String(pagoAEditar.montoInformado ?? pagoAEditar.monto ?? pagoAEditar.membresia?.precio ?? ""),
+    montoContable: String(pagoAEditar.monto ?? pagoAEditar.membresia?.precio ?? ""),
+    medio: pagoAEditar.medio || "transferencia"
   }
   error.value = ""
   showEditPaymentModal.value = true
@@ -357,7 +377,7 @@ async function guardarPagoEditado() {
     return
   }
 
-  const ultimoPago = getUltimoPago(alumnoPagoEditando.value)
+  const pagoBase = pagoOriginalEditando.value
   const selectedMembresia = membresias.value.find((m) => m._id === pagoActual.value.membresiaId)
 
   if (!selectedMembresia) {
@@ -398,12 +418,12 @@ async function guardarPagoEditado() {
       tipoPago: tipoNormalizado,
       montoIngresado: monto,
       membresiaPrecio: Number(selectedMembresia.precio || 0),
-      pagoParcial: Boolean(ultimoPago?.esParcial)
+      pagoParcial: Boolean(pagoBase?.esParcial)
     }),
-    esParcial: ultimoPago?.esParcial || false,
-    completaParcial: ultimoPago?.completaParcial || false,
-    montoObjetivo: ultimoPago?.montoObjetivo ?? null,
-    saldoPendiente: ultimoPago?.saldoPendiente ?? 0,
+    esParcial: pagoBase?.esParcial || false,
+    completaParcial: pagoBase?.completaParcial || false,
+    montoObjetivo: pagoBase?.montoObjetivo ?? null,
+    saldoPendiente: pagoBase?.saldoPendiente ?? 0,
     allowDuplicateSameDay
   }
 
@@ -417,18 +437,7 @@ async function guardarPagoEditado() {
       payload
     )
 
-    entrenadores.value = entrenadores.value.map((entrenador) => {
-      if (entrenador._id !== entrenadorPagoEditando.value?._id) return entrenador
-
-      return {
-        ...entrenador,
-        alumnos: (entrenador.alumnos || []).map((alumno) =>
-          getAlumnoId(alumno) === getAlumnoId(alumnoPagoEditando.value)
-            ? alumnoActualizado
-            : alumno
-        )
-      }
-    })
+    replaceAlumnoInTrainer(entrenadorPagoEditando.value?._id, alumnoActualizado)
 
     closeEditPaymentModal()
   } catch (e) {
@@ -450,18 +459,7 @@ async function guardarPagoEditado() {
           }
         )
 
-        entrenadores.value = entrenadores.value.map((entrenador) => {
-          if (entrenador._id !== entrenadorPagoEditando.value?._id) return entrenador
-
-          return {
-            ...entrenador,
-            alumnos: (entrenador.alumnos || []).map((alumno) =>
-              getAlumnoId(alumno) === getAlumnoId(alumnoPagoEditando.value)
-                ? alumnoActualizado
-                : alumno
-            )
-          }
-        })
+        replaceAlumnoInTrainer(entrenadorPagoEditando.value?._id, alumnoActualizado)
 
         closeEditPaymentModal()
         return
@@ -475,6 +473,31 @@ async function guardarPagoEditado() {
     error.value = e.message || "No se pudo actualizar el pago."
   } finally {
     isSavingPayment.value = false
+  }
+}
+
+async function eliminarPagoEditando() {
+  if (!alumnoPagoEditando.value || !pagoActual.value.pagoId) return
+
+  const confirmed = confirm("¿Querés eliminar este pago? Esta acción no se puede deshacer.")
+  if (!confirmed) return
+
+  try {
+    isDeletingPayment.value = true
+    error.value = ""
+
+    const alumnoActualizado = await MongoService.deletePago(
+      getAlumnoId(alumnoPagoEditando.value),
+      pagoActual.value.pagoId
+    )
+
+    replaceAlumnoInTrainer(entrenadorPagoEditando.value?._id, alumnoActualizado)
+    closeEditPaymentModal()
+  } catch (e) {
+    console.error("Error deleting payment:", e)
+    error.value = e.message || "No se pudo eliminar el pago."
+  } finally {
+    isDeletingPayment.value = false
   }
 }
 </script>
@@ -546,7 +569,7 @@ async function guardarPagoEditado() {
                   <div v-if="getUltimoPago(alumno) || getUltimosPagos(alumno).length > 0" class="payment-actions-row">
                     <button
                       v-if="getUltimoPago(alumno)"
-                      @click="openEditPaymentModal(entrenador, alumno)"
+                      @click="openEditPaymentModal(entrenador, alumno, getUltimoPago(alumno))"
                       class="edit-payment-button"
                     >
                       Editar último pago
@@ -566,10 +589,20 @@ async function guardarPagoEditado() {
                   <div v-if="isHistoryExpanded(alumno._id || alumno.id)" class="admin-history-list">
                     <p class="history-title">Últimos pagos:</p>
                     <div v-for="(pago, i) in getUltimosPagos(alumno)" :key="i" class="mini-history-item">
-                      <span class="mini-date">{{ formatDate(pago.fecha) }}</span>
-                      <span class="mini-type">{{ getPaymentLabel(pago) }}</span>
-                      <span v-if="pago.membresia" class="mini-membresia">{{ pago.membresia.nombre }}</span>
-                      <span v-if="getDisplayedPaymentAmount(pago)" class="mini-monto">${{ getDisplayedPaymentAmount(pago) }}</span>
+                      <div class="mini-history-main">
+                        <span class="mini-date">{{ formatDate(pago.fecha) }}</span>
+                        <span class="mini-type">{{ getPaymentLabel(pago) }}</span>
+                        <span v-if="pago.membresia" class="mini-membresia">{{ pago.membresia.nombre }}</span>
+                        <span v-if="getDisplayedPaymentAmount(pago)" class="mini-monto">${{ getDisplayedPaymentAmount(pago) }}</span>
+                      </div>
+                      <div class="mini-history-actions">
+                        <button type="button" class="history-action-button" @click="openEditPaymentModal(entrenador, alumno, pago)">
+                          Editar
+                        </button>
+                        <button type="button" class="history-action-button danger" @click="openEditPaymentModal(entrenador, alumno, pago)">
+                          Eliminar
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -635,7 +668,7 @@ async function guardarPagoEditado() {
     >
       <div class="modal-content">
         <div class="modal-header">
-          <h2>Editar Último Pago</h2>
+          <h2>Editar Pago</h2>
           <button @click="closeEditPaymentModal" class="close-button">×</button>
         </div>
 
@@ -724,6 +757,14 @@ async function guardarPagoEditado() {
           <div class="modal-actions">
             <button type="button" @click="closeEditPaymentModal" class="cancel-button" :disabled="isSavingPayment">
               Cancelar
+            </button>
+            <button
+              type="button"
+              @click="eliminarPagoEditando"
+              class="cancel-button danger-button"
+              :disabled="isSavingPayment || isDeletingPayment"
+            >
+              {{ isDeletingPayment ? "Eliminando..." : "Eliminar Pago" }}
             </button>
             <button type="button" @click="guardarPagoEditado" class="submit-button" :disabled="isSavingPayment">
               {{ isSavingPayment ? "Guardando..." : "Guardar Cambios" }}
@@ -1214,6 +1255,12 @@ async function guardarPagoEditado() {
   color: var(--header-text);
 }
 
+.danger-button {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #b91c1c;
+}
+
 .cancel-button:active {
   transform: scale(0.98);
   background-color: #f3f4f6;
@@ -1278,9 +1325,11 @@ async function guardarPagoEditado() {
 
 .mini-history-item {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   font-size: 0.8rem;
-  padding: 2px 0;
+  padding: 6px 0;
   border-bottom: 1px solid var(--input-border);
 }
 
@@ -1288,8 +1337,38 @@ async function guardarPagoEditado() {
   border-bottom: none;
 }
 
+.mini-history-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.mini-history-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.history-action-button {
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--header-text);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.history-action-button.danger {
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+
 .mini-date { font-weight: 600; color: var(--header-text); }
 .mini-type { color: var(--subtitle-text); }
-.mini-membresia { color: var(--rheb-accent-green); margin-left: auto; }
-.mini-monto { font-weight: 600; color: var(--rheb-primary-green); margin-left: 8px; }
+.mini-membresia { color: var(--rheb-accent-green); }
+.mini-monto { font-weight: 600; color: var(--rheb-primary-green); }
 </style>

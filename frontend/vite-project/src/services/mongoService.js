@@ -285,6 +285,26 @@ export const MongoService = {
         }
     },
 
+    async deletePago(alumnoId, pagoId) {
+        try {
+            const response = await fetch(`${API_URL}/alumnos/${alumnoId}/pagos/${pagoId}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                const err = new Error(errorData.error || 'Error al eliminar pago');
+                err.status = response.status;
+                err.code = errorData.code;
+                err.data = errorData;
+                throw err;
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
     async getExpenses(month = null, year = null) {
         try {
             const params = new URLSearchParams();
