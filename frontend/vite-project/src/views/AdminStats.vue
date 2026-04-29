@@ -338,6 +338,16 @@ function wasAlumnoActiveInRange(alumno, startDate, endDate) {
   return fechaAlta <= endDate && (!fechaInactivacion || fechaInactivacion >= startDate)
 }
 
+function isAlumnoCurrentlyActive(alumno) {
+  return alumno?.estado !== "inactivo"
+}
+
+function getActiveAlumnosForStats(entrenador, startDate, endDate) {
+  return (entrenador.alumnos || []).filter((alumno) =>
+    isAlumnoCurrentlyActive(alumno) && wasAlumnoActiveInRange(alumno, startDate, endDate)
+  )
+}
+
 function getEstimatedAmountForAlumnoInRange(alumno, startDate, endDate) {
   return getPeriodStartsInRange(startDate, endDate).reduce((acc, periodDate) => {
     const { start, end } = getPeriodBoundsFromDate(periodDate)
@@ -351,9 +361,7 @@ const statsPorEntrenador = computed(() => {
   const statusReferenceDate = getStatusReferenceDate(selectedYear.value, selectedMonth.value)
 
   return entrenadoresVisibles.value.map((entrenador) => {
-    const alumnosActivosEnMes = (entrenador.alumnos || []).filter((alumno) =>
-      wasAlumnoActiveInRange(alumno, monthBounds.start, monthBounds.end)
-    )
+    const alumnosActivosEnMes = getActiveAlumnosForStats(entrenador, monthBounds.start, monthBounds.end)
     const totalAlumnos = alumnosActivosEnMes.length
     const alDia = alumnosActivosEnMes.filter((a) => getPaymentStatus(a, statusReferenceDate) === "green").length
     const proximoVencer = alumnosActivosEnMes.filter((a) => getPaymentStatus(a, statusReferenceDate) === "yellow").length
@@ -421,8 +429,7 @@ const statsGenerales = computed(() => {
   let montoEstimadoMes = 0
   entrenadoresVisibles.value.forEach((entrenador) => {
     const { start, end } = getMonthBounds(selectedYear.value, selectedMonth.value)
-    ;(entrenador.alumnos || [])
-      .filter((alumno) => wasAlumnoActiveInRange(alumno, start, end))
+    getActiveAlumnosForStats(entrenador, start, end)
       .forEach((alumno) => {
       montoEstimadoMes += getEstimatedAmountForAlumnoInRange(alumno, start, end)
       alumno.historialPagos.forEach((pago) => {

@@ -16,6 +16,7 @@ const membresias = ref([])
 const showEditPaymentModal = ref(false)
 const isSavingPayment = ref(false)
 const isDeletingPayment = ref(false)
+const deletingInactiveAlumnoId = ref("")
 const alumnoPagoEditando = ref(null)
 const entrenadorPagoEditando = ref(null)
 const pagoOriginalEditando = ref(null)
@@ -286,6 +287,38 @@ async function reactivarAlumno(entrenador, alumno) {
   } catch (e) {
     console.error("Error reactivating alumno:", e)
     error.value = e.message || "No se pudo reactivar el alumno."
+  }
+}
+
+async function eliminarAlumnoInactivo(entrenador, alumno) {
+  const alumnoId = getAlumnoId(alumno)
+  const confirmed = confirm(`¿Querés eliminar definitivamente a ${alumno.nombre} ${alumno.apellido}? Esta acción no se puede deshacer.`)
+  if (!confirmed) return
+
+  try {
+    deletingInactiveAlumnoId.value = alumnoId
+    error.value = ""
+
+    await MongoService.deleteAlumnoPermanentemente(alumnoId, {
+      role: currentUser.value?.role,
+      userId: currentUser.value?._id
+    })
+
+    entrenadores.value = entrenadores.value.map((item) => {
+      if (item._id !== entrenador._id) return item
+
+      return {
+        ...item,
+        alumnos: (item.alumnos || []).filter((existingAlumno) =>
+          getAlumnoId(existingAlumno) !== alumnoId
+        )
+      }
+    })
+  } catch (e) {
+    console.error("Error deleting inactive alumno:", e)
+    error.value = e.message || "No se pudo eliminar el alumno."
+  } finally {
+    deletingInactiveAlumnoId.value = ""
   }
 }
 
@@ -644,6 +677,13 @@ async function eliminarPagoEditando() {
                 <div class="status-container">
                   <button @click="reactivarAlumno(entrenador, alumno)" class="edit-payment-button">
                     Reactivar
+                  </button>
+                  <button
+                    @click="eliminarAlumnoInactivo(entrenador, alumno)"
+                    class="edit-payment-button delete-inactive-button"
+                    :disabled="deletingInactiveAlumnoId === getAlumnoId(alumno)"
+                  >
+                    {{ deletingInactiveAlumnoId === getAlumnoId(alumno) ? "Eliminando..." : "Eliminar" }}
                   </button>
                 </div>
               </div>
@@ -1060,6 +1100,21 @@ async function eliminarPagoEditando() {
 
 .edit-payment-button:hover {
   background: rgba(255, 215, 0, 0.08);
+}
+
+.delete-inactive-button {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #b91c1c;
+}
+
+.delete-inactive-button:hover {
+  background: #fecaca;
+}
+
+.delete-inactive-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .payment-type {

@@ -662,6 +662,31 @@ app.delete('/api/alumnos/:id', async (req, res) => {
     }
 });
 
+// PERMANENT DELETE Alumno
+app.delete('/api/alumnos/:id/permanent', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const actorRole = req.query.actorRole || null;
+
+        if (actorRole !== 'admin') {
+            return res.status(403).json({ error: 'Solo un administrador puede eliminar alumnos definitivamente.' });
+        }
+
+        const alumno = await Alumno.findById(id);
+        if (!alumno) return res.status(404).json({ error: 'Alumno no encontrado' });
+        if (alumno.estado !== 'inactivo') {
+            return res.status(400).json({ error: 'Solo se pueden eliminar definitivamente alumnos inactivos.' });
+        }
+
+        await removeAlumnoAssignments(alumno._id);
+        await Alumno.findByIdAndDelete(id);
+
+        res.json({ message: 'Alumno eliminado definitivamente' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.post('/api/alumnos/:id/reactivar', async (req, res) => {
     try {
         const { id } = req.params;
