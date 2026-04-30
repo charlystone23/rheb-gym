@@ -16,6 +16,7 @@ const membresias = ref([])
 const showEditPaymentModal = ref(false)
 const isSavingPayment = ref(false)
 const isDeletingPayment = ref(false)
+const deactivatingAlumnoId = ref("")
 const deletingInactiveAlumnoId = ref("")
 const alumnoPagoEditando = ref(null)
 const entrenadorPagoEditando = ref(null)
@@ -265,6 +266,41 @@ function getActiveAlumnos(entrenador) {
 
 function getInactiveAlumnos(entrenador) {
   return (entrenador.alumnos || []).filter((alumno) => alumno.estado === "inactivo")
+}
+
+async function desactivarAlumno(entrenador, alumno) {
+  const alumnoId = getAlumnoId(alumno)
+  const confirmed = confirm(`¿Querés desactivar a ${alumno.nombre} ${alumno.apellido}? Se quitará de sus turnos y quedará en alumnos inactivos.`)
+  if (!confirmed) return
+
+  try {
+    deactivatingAlumnoId.value = alumnoId
+    error.value = ""
+
+    const result = await MongoService.deleteAlumno(alumnoId, {
+      role: currentUser.value?.role,
+      userId: currentUser.value?._id
+    })
+    const alumnoActualizado = result?.alumno || result
+
+    entrenadores.value = entrenadores.value.map((item) => {
+      if (item._id !== entrenador._id) return item
+
+      return {
+        ...item,
+        alumnos: (item.alumnos || []).map((existingAlumno) =>
+          getAlumnoId(existingAlumno) === alumnoId
+            ? { ...existingAlumno, ...alumnoActualizado, id: alumnoActualizado?._id || alumnoId }
+            : existingAlumno
+        )
+      }
+    })
+  } catch (e) {
+    console.error("Error deactivating alumno:", e)
+    error.value = e.message || "No se pudo desactivar el alumno."
+  } finally {
+    deactivatingAlumnoId.value = ""
+  }
 }
 
 async function reactivarAlumno(entrenador, alumno) {
@@ -658,6 +694,13 @@ async function eliminarPagoEditando() {
                     ? `${Math.abs(getDaysUntilPayment(alumno))} días de retraso`
                     : getDaysUntilPayment(alumno) === 0 ? '0 días de retraso' : `${getDaysUntilPayment(alumno)} días` }}
                 </span>
+                <button
+                  @click="desactivarAlumno(entrenador, alumno)"
+                  class="edit-payment-button deactivate-active-button"
+                  :disabled="deactivatingAlumnoId === getAlumnoId(alumno)"
+                >
+                  {{ deactivatingAlumnoId === getAlumnoId(alumno) ? "Desactivando..." : "Desactivar" }}
+                </button>
               </div>
             </div>
 
@@ -1108,10 +1151,21 @@ async function eliminarPagoEditando() {
   border-color: #b91c1c;
 }
 
+.deactivate-active-button {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #f59e0b;
+}
+
+.deactivate-active-button:hover {
+  background: #fef3c7;
+}
+
 .delete-inactive-button:hover {
   background: #fecaca;
 }
 
+.deactivate-active-button:disabled,
 .delete-inactive-button:disabled {
   cursor: not-allowed;
   opacity: 0.65;

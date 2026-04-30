@@ -1057,13 +1057,13 @@ async function confirmarDelegacion() {
     <div v-if="showDeleteModal" class="modal-overlay" @click.self="closeDeleteModal">
       <div class="modal-content delete-confirmation-modal">
         <div class="delete-icon-large">⚠️</div>
-        <h3>¿Eliminar Alumno?</h3>
-        <p>Estás a punto de eliminar a <strong>{{ alumnoAEliminar?.nombre }} {{ alumnoAEliminar?.apellido }}</strong>.</p>
-        <p class="delete-warning">Esta acción es permanente y no se puede deshacer.</p>
+        <h3>¿Desactivar Alumno?</h3>
+        <p>Estás a punto de desactivar a <strong>{{ alumnoAEliminar?.nombre }} {{ alumnoAEliminar?.apellido }}</strong>.</p>
+        <p class="delete-warning">El alumno quedará inactivo y se quitará de sus turnos. Un administrador podrá reactivarlo o eliminarlo definitivamente.</p>
         
         <div class="modal-actions-stacked">
           <button @click="confirmarEliminacion" class="confirm-delete-btn" :disabled="isLoading">
-            {{ isLoading ? 'Eliminando...' : 'Sí, Eliminar' }}
+            {{ isLoading ? 'Desactivando...' : 'Sí, Desactivar' }}
           </button>
           <button @click="closeDeleteModal" class="cancel-delete-btn" :disabled="isLoading">
             Cancelar
