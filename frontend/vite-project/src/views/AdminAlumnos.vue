@@ -481,6 +481,27 @@ async function guardarPagoEditado() {
   }
 
   const tipoNormalizado = normalizePaymentType(pagoActual.value.tipoPago)
+
+  const isNewPagoPartial = pagoBase?.esParcial || pagoBase?.completaParcial
+  const isNewPagoPromise = isPromisePayment(tipoNormalizado)
+
+  if (!isNewPagoPartial && !isNewPagoPromise) {
+    const hasDuplicatePeriod = alumnoPagoEditando.value.historialPagos?.some(p => {
+      if (p._id === pagoActual.value.pagoId) return false
+      const isExistingPagoPartial = p.esParcial || p.completaParcial
+      const isExistingPagoPromise = isPromisePayment(p.tipo || p.detalle)
+      return p.mesQueAbona === Number(pagoActual.value.mesQueAbona) &&
+             p.anioQueAbona === editPaymentYear.value &&
+             !isExistingPagoPartial &&
+             !isExistingPagoPromise
+    })
+
+    if (hasDuplicatePeriod) {
+      error.value = `El alumno ya tiene otro pago completo registrado para el período ${pagoActual.value.mesQueAbona}/${editPaymentYear.value}.`
+      return
+    }
+  }
+
   const sameDayPayment = findSameDayPayment(alumnoPagoEditando.value, fechaPagoDate, pagoActual.value.pagoId)
   let allowDuplicateSameDay = false
 
@@ -765,6 +786,25 @@ async function registrarPago() {
     }
 
     montoCalculado = montoParcial
+  }
+
+  const isNewPagoPartial = nuevoPago.value.pagoParcial || hadPendingPartial
+  const isNewPagoPromise = isPromisePayment(tipoFinal)
+
+  if (!isNewPagoPartial && !isNewPagoPromise) {
+    const hasDuplicatePeriod = alumnoSeleccionado.value.historialPagos?.some(p => {
+      const isExistingPagoPartial = p.esParcial || p.completaParcial
+      const isExistingPagoPromise = isPromisePayment(p.tipo || p.detalle)
+      return p.mesQueAbona === Number(nuevoPago.value.mesQueAbona) &&
+             p.anioQueAbona === paymentYear.value &&
+             !isExistingPagoPartial &&
+             !isExistingPagoPromise
+    })
+
+    if (hasDuplicatePeriod) {
+      error.value = `El alumno ya tiene un pago completo registrado para el período ${nuevoPago.value.mesQueAbona}/${paymentYear.value}.`
+      return
+    }
   }
 
   const completaConMontoExacto = nuevoPago.value.pagoParcial && montoCalculado === montoBase
