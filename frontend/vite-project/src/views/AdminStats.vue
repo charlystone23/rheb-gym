@@ -498,35 +498,6 @@ async function exportToExcel() {
         const paymentStatus = getPaymentStatus(alumno, statusReferenceDate)
         const pagosMes = getPagosForExactPeriodo(alumno, statusReferenceDate)
 
-        // Calculate schedule count and details
-        const studentAssignments = []
-        horarios.value.forEach((h) => {
-          if (h.asignaciones) {
-            h.asignaciones.forEach((a) => {
-              const aAlumnoId = a.alumno?._id?.toString() || a.alumno?.toString()
-              const currentAlumnoId = alumno._id?.toString() || alumno.id?.toString()
-              if (aAlumnoId === currentAlumnoId) {
-                studentAssignments.push({
-                  dia: a.dia,
-                  hora: a.hora
-                })
-              }
-            })
-          }
-        })
-
-        // Sort assignments by day of the week and hour
-        const daysOrder = { "Lunes": 1, "Martes": 2, "Miércoles": 3, "Jueves": 4, "Viernes": 5, "Sábado": 6, "Domingo": 7 }
-        studentAssignments.sort((a, b) => {
-          const dayA = daysOrder[a.dia] || 99
-          const dayB = daysOrder[b.dia] || 99
-          if (dayA !== dayB) return dayA - dayB
-          return a.hora - b.hora
-        })
-
-        const vecesQueVieneCount = studentAssignments.length
-        const turnosDetalle = studentAssignments.map(a => `${a.dia} ${a.hora}:00`).join(', ')
-
         // Payment status translation
         let estadoPagoText = "Moroso / En Deuda"
         if (paymentStatus === "green") estadoPagoText = "Al Día"
@@ -544,14 +515,11 @@ async function exportToExcel() {
 
         alumnosRows.push({
           "Alumno": `${alumno.nombre} ${alumno.apellido}`,
-          "Celular": alumno.celular || 'No registrado',
           "Entrenador (A quién pertenece)": `${entrenador.nombre} ${entrenador.apellido || ''}`.trim(),
           "Membresía": membershipSnapshot?.nombre || 'Ninguna',
-          "Precio Membresía": membershipSnapshot?.precio || 0,
-          "Veces que viene (Turnos)": vecesQueVieneCount > 0 ? `${vecesQueVieneCount} veces/semana` : 'Sin turnos',
-          "Días y Horarios": turnosDetalle || 'No asignados',
+          "Precio Membresía": `$ ${(membershipSnapshot?.precio || 0).toLocaleString('es-AR')}`,
           "Estado de Pago del Mes": estadoPagoText,
-          "Monto Abonado": totalAbonado,
+          "Monto Abonado": `$ ${(totalAbonado || 0).toLocaleString('es-AR')}`,
           "Detalle de Pagos": detallePagos || 'Sin pagos en este mes'
         })
       })
@@ -566,10 +534,10 @@ async function exportToExcel() {
       resumenRows.push({ "Concepto": "Alumnos A Vencer", "Valor": statsGenerales.value.proximoVencer })
       resumenRows.push({ "Concepto": "Alumnos Morosos", "Valor": statsGenerales.value.deuda })
       resumenRows.push({ "Concepto": "% Alumnos Al Día/A Vencer", "Valor": `${statsGenerales.value.porcentajeActivos}%` })
-      resumenRows.push({ "Concepto": "Recaudación Real del Mes", "Valor": statsGenerales.value.montoRealMes })
-      resumenRows.push({ "Concepto": "Recaudación Estimada (Fin de Mes)", "Valor": statsGenerales.value.montoEstimadoMes })
-      resumenRows.push({ "Concepto": "Gastos Totales del Mes", "Valor": statsGenerales.value.gastosMes })
-      resumenRows.push({ "Concepto": "Recaudación Neta", "Valor": statsGenerales.value.recaudacionNeta })
+      resumenRows.push({ "Concepto": "Recaudación Real del Mes", "Valor": `$ ${(statsGenerales.value.montoRealMes || 0).toLocaleString('es-AR')}` })
+      resumenRows.push({ "Concepto": "Recaudación Estimada (Fin de Mes)", "Valor": `$ ${(statsGenerales.value.montoEstimadoMes || 0).toLocaleString('es-AR')}` })
+      resumenRows.push({ "Concepto": "Gastos Totales del Mes", "Valor": `$ ${(statsGenerales.value.gastosMes || 0).toLocaleString('es-AR')}` })
+      resumenRows.push({ "Concepto": "Recaudación Neta", "Valor": `$ ${(statsGenerales.value.recaudacionNeta || 0).toLocaleString('es-AR')}` })
     }
 
     // Add list of expenses in Resumen tab as well
@@ -579,7 +547,7 @@ async function exportToExcel() {
         gastosRows.push({
           "Fecha Gasto": formatDateAR(expense.fecha),
           "Detalle Gasto": expense.detalle,
-          "Monto Gasto": Number(expense.monto || 0)
+          "Monto Gasto": `$ ${(Number(expense.monto || 0)).toLocaleString('es-AR')}`
         })
       })
     }
