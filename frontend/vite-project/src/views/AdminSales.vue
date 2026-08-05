@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed } from "vue"
+import { ref, onMounted, onUnmounted, computed } from "vue"
 import { useRouter } from "vue-router"
 import DateField from "../components/DateField.vue"
 import { MongoService } from "../services/mongoService"
@@ -11,33 +11,43 @@ const isLoading = ref(false)
 const error = ref("")
 const currentUser = ref(null)
 
+// Search & Filters
+const searchQuery = ref("")
+const selectedCategory = ref("TODAS")
+
 // Modals state
 const showProductModal = ref(false)
 const showSaleModal = ref(false)
-const showStockModal = ref(false) // New
-const showPriceModal = ref(false) // New Price Modal
-const showHistoryModal = ref(false) // New
+const showStockModal = ref(false)
+const showPriceModal = ref(false)
+const showHistoryModal = ref(false)
 const isEditing = ref(false)
 
 // Forms data
 const productForm = ref({
   id: null,
-  name: "",
-  price: 0,
-  stock: 0,
-  category: "General"
+  nombre: "",
+  codigoBarras: "",
+  descripcion: "",
+  precioVenta: 0,
+  precioCosto: 0,
+  stockActual: 0,
+  stockMinimo: 5,
+  categoria: "General",
+  activo: true
 })
 
 const saleForm = ref({
   product: null,
   productName: "",
-  price: 0,
+  precioVenta: 0,
   quantity: 1,
-  maxStock: 0
+  maxStock: 0,
+  metodoPago: "EFECTIVO"
 })
 
 const saleTotal = computed(() => {
-  return saleForm.value.price * saleForm.value.quantity
+  return saleForm.value.precioVenta * saleForm.value.quantity
 })
 
 // Stock Adjustment Form
@@ -46,7 +56,8 @@ const stockForm = ref({
   productName: "",
   currentStock: 0,
   newStock: 0,
-  reason: ""
+  razon: "",
+  tipoMovimiento: "AJUSTE_MANUAL"
 })
 
 // Price Update Form
@@ -57,12 +68,91 @@ const priceForm = ref({
   newPrice: 0
 })
 
-const historyLogs = ref([])
+const historyMovements = ref([])
 const historyProduct = ref(null)
-const salesStats = ref(null) // New
-const showSalesStatsModal = ref(false) // New
+const salesStats = ref(null)
+const showSalesStatsModal = ref(false)
 
-const isAdmin = computed(() => currentUser.value?.role === 'admin')
+const isAdmin = computed(() => {
+  const role = currentUser.value?.role?.toUpperCase()
+  return role === 'ADMIN'
+})
+
+const canManageProducts = computed(() => {
+  const role = currentUser.value?.role?.toUpperCase()
+  return role === 'ADMIN' || role === 'ADMIN_VENTAS'
+})
+
+// Categories
+const categories = computed(() => {
+  const cats = new Set(products.value.map(p => p.categoria || p.category || 'General'))
+  return ['TODAS', ...Array.from(cats)]
+})
+
+// Low Stock Alert List
+const lowStockProducts = computed(() => {
+  return products.value.filter(p => {
+    const stock = p.stockActual !== undefined ? p.stockActual : (p.stock || 0)
+    const min = p.stockMinimo !== undefined ? p.stockMinimo : 5
+    return stock <= min
+  })
+})
+
+// Filtered Products List
+const filteredProducts = computed(() => {
+  return products.value.filter(p => {
+    const name = (p.nombre || p.name || '').toLowerCase()
+    const barcode = (p.codigoBarras || p.barcode || '').toLowerCase()
+    const cat = p.categoria || p.category || 'General'
+    const q = searchQuery.value.toLowerCase()
+
+    const matchesSearch = name.includes(q) || barcode.includes(q)
+    const matchesCategory = selectedCategory.value === 'TODAS' || cat === selectedCategory.value
+
+    return matchesSearch && matchesCategory
+  })
+})
+
+// --- Barcode Scanner Handler ---
+let barcodeBuffer = ""
+let barcodeTimer = null
+
+function handleKeyDown(e) {
+  const activeTag = document.activeElement?.tagName
+  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') {
+    return
+  }
+
+  if (e.key === 'Enter') {
+    if (barcodeBuffer.trim().length >= 3) {
+      handleBarcodeScan(barcodeBuffer.trim())
+    }
+    barcodeBuffer = ""
+    return
+  }
+
+  if (e.key.length === 1) {
+    barcodeBuffer += e.key
+    clearTimeout(barcodeTimer)
+    barcodeTimer = setTimeout(() => {
+      barcodeBuffer = ""
+    }, 120)
+  }
+}
+
+async function handleBarcodeScan(code) {
+  const found = products.value.find(p => p.codigoBarras === code)
+  if (found) {
+    openSaleModal(found)
+  } else {
+    const remoteProd = await MongoService.searchProduct(code)
+    if (remoteProd) {
+      openSaleModal(remoteProd)
+    } else {
+      alert(`⚠️ Código de barras "${code}" no encontrado en el sistema.`)
+    }
+  }
+}
 
 onMounted(() => {
   const userStr = localStorage.getItem("user")
@@ -70,6 +160,11 @@ onMounted(() => {
     currentUser.value = JSON.parse(userStr)
   }
   loadProducts()
+  window.addEventListener('keydown', handleKeyDown)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeyDown)
 })
 
 async function loadProducts() {
@@ -85,7 +180,7 @@ async function loadProducts() {
 }
 
 function goBack() {
-  if (isAdmin.value) {
+  if (isAdmin.value || canManageProducts.value) {
     router.push("/admin")
   } else {
     router.push("/dashboard")
@@ -95,28 +190,47 @@ function goBack() {
 // --- Product Management ---
 function openCreateModal() {
   isEditing.value = false
-  productForm.value = { name: "", price: 0, stock: 0, category: "General" }
+  productForm.value = {
+    nombre: "",
+    codigoBarras: "",
+    descripcion: "",
+    precioVenta: 0,
+    precioCosto: 0,
+    stockActual: 0,
+    stockMinimo: 5,
+    categoria: "General",
+    activo: true
+  }
   showProductModal.value = true
 }
 
 function openEditModal(product) {
   isEditing.value = true
-  productForm.value = { 
+  productForm.value = {
     id: product._id,
-    name: product.name, 
-    price: product.price, 
-    stock: product.stock, 
-    category: product.category 
+    nombre: product.nombre || product.name,
+    codigoBarras: product.codigoBarras || "",
+    descripcion: product.descripcion || "",
+    precioVenta: product.precioVenta !== undefined ? product.precioVenta : (product.price || 0),
+    precioCosto: product.precioCosto !== undefined ? product.precioCosto : 0,
+    stockActual: product.stockActual !== undefined ? product.stockActual : (product.stock || 0),
+    stockMinimo: product.stockMinimo !== undefined ? product.stockMinimo : 5,
+    categoria: product.categoria || product.category || "General",
+    activo: product.activo !== undefined ? product.activo : true
   }
   showProductModal.value = true
 }
 
 async function saveProduct() {
   try {
+    if (!productForm.value.nombre.trim()) {
+      alert("El nombre del producto es obligatorio.")
+      return
+    }
     if (isEditing.value) {
-      await MongoService.updateProduct(productForm.value.id, productForm.value)
+      await MongoService.updateProduct(productForm.value.id, productForm.value, currentUser.value)
     } else {
-      await MongoService.createProduct(productForm.value)
+      await MongoService.createProduct(productForm.value, currentUser.value)
     }
     showProductModal.value = false
     loadProducts()
@@ -126,9 +240,9 @@ async function saveProduct() {
 }
 
 async function deleteProduct(id) {
-  if (!confirm("⚠️ ¡ADVERTENCIA! \n\nEsto eliminará el producto y TODAS su ventas históricas. Esta acción afectará las estadísticas de recaudación pasadas. \n\n¿Desea continuar?")) return
+  if (!confirm("⚠️ ¡ADVERTENCIA! \n\n¿Estás seguro de que deseas eliminar este producto?\n\nEsta acción no se puede deshacer.")) return
   try {
-    await MongoService.deleteProduct(id)
+    await MongoService.deleteProduct(id, currentUser.value)
     loadProducts()
   } catch (e) {
     alert("Error al eliminar: " + e.message)
@@ -137,26 +251,32 @@ async function deleteProduct(id) {
 
 // --- Stock Adjustment ---
 function openStockModal(product) {
+  const currentStockVal = product.stockActual !== undefined ? product.stockActual : (product.stock || 0)
   stockForm.value = {
     product: product._id,
-    productName: product.name,
-    currentStock: product.stock,
-    newStock: product.stock,
-    reason: ""
+    productName: product.nombre || product.name,
+    currentStock: currentStockVal,
+    newStock: currentStockVal,
+    razon: "",
+    tipoMovimiento: "AJUSTE_MANUAL"
   }
   showStockModal.value = true
 }
 
 async function updateStock() {
-  if (!stockForm.value.reason.trim()) {
-    alert("Por favor, ingresa un motivo para el ajuste.")
+  if (!stockForm.value.razon || !stockForm.value.razon.trim()) {
+    alert("⚠️ El motivo del ajuste es OBLIGATORIO para garantizar la trazabilidad del inventario.")
     return
   }
   try {
     await MongoService.adjustStock(
       stockForm.value.product,
-      stockForm.value.newStock,
-      stockForm.value.reason
+      {
+        cantidadNueva: Number(stockForm.value.newStock),
+        razon: stockForm.value.razon.trim(),
+        tipoMovimiento: stockForm.value.tipoMovimiento,
+        usuarioId: currentUser.value?._id
+      }
     )
     showStockModal.value = false
     alert("Stock actualizado exitosamente")
@@ -168,11 +288,12 @@ async function updateStock() {
 
 // --- Price Update ---
 function openPriceModal(product) {
+  const currentPriceVal = product.precioVenta !== undefined ? product.precioVenta : (product.price || 0)
   priceForm.value = {
     id: product._id,
-    name: product.name,
-    currentPrice: product.price,
-    newPrice: product.price
+    name: product.nombre || product.name,
+    currentPrice: currentPriceVal,
+    newPrice: currentPriceVal
   }
   showPriceModal.value = true
 }
@@ -183,10 +304,10 @@ async function updatePriceOnly() {
     return
   }
   try {
-    // Reusing updateProduct but only sending price
     await MongoService.updateProduct(priceForm.value.id, {
+      precioVenta: priceForm.value.newPrice,
       price: priceForm.value.newPrice
-    })
+    }, currentUser.value)
     showPriceModal.value = false
     alert("Precio actualizado exitosamente")
     loadProducts()
@@ -196,10 +317,9 @@ async function updatePriceOnly() {
 }
 
 // --- History & Stats ---
-// --- General Stats (Admin Only) ---
 const showGeneralStatsModal = ref(false)
 const generalStats = ref(null)
-const expandedSellers = ref([]) // Array of seller names
+const expandedSellers = ref([])
 const today = new Date()
 const statsDateRange = ref(getMonthRangeDisplay(today.getFullYear(), today.getMonth()))
 const isLoadingStats = ref(false)
@@ -243,16 +363,15 @@ async function loadGeneralStats() {
 async function openHistoryModal(product) {
   historyProduct.value = product
   
-  if (isAdmin.value) {
-    historyLogs.value = []
+  if (canManageProducts.value) {
+    historyMovements.value = []
     showHistoryModal.value = true
     try {
-      historyLogs.value = await MongoService.getStockLogs(product._id)
+      historyMovements.value = await MongoService.getStockMovements(product._id)
     } catch (e) {
-      console.error("Error fetching history:", e)
+      console.error("Error fetching stock movements:", e)
     }
   } else {
-    // For Trainer: Show Sales Stats
     salesStats.value = null
     showSalesStatsModal.value = true
     try {
@@ -274,16 +393,18 @@ function updateStatsDateRange(field, value) {
 
 // --- Sales Management ---
 function openSaleModal(product) {
-  if (product.stock <= 0) {
-    alert("No hay stock disponible")
+  const currentStock = product.stockActual !== undefined ? product.stockActual : (product.stock || 0)
+  if (currentStock <= 0) {
+    alert("⚠️ No hay stock disponible para este producto.")
     return
   }
   saleForm.value = {
     product: product._id,
-    productName: product.name,
-    price: product.price,
+    productName: product.nombre || product.name,
+    precioVenta: product.precioVenta !== undefined ? product.precioVenta : (product.price || 0),
     quantity: 1,
-    maxStock: product.stock
+    maxStock: currentStock,
+    metodoPago: "EFECTIVO"
   }
   showSaleModal.value = true
 }
@@ -292,25 +413,26 @@ async function registerSale() {
   try {
     const saleData = {
       items: [{
-        product: saleForm.value.product,
-        quantity: saleForm.value.quantity,
-        price: saleForm.value.price
+        productoId: saleForm.value.product,
+        cantidad: saleForm.value.quantity,
+        precioUnitario: saleForm.value.precioVenta
       }],
       total: saleTotal.value,
-      seller: currentUser.value ? (currentUser.value._id || currentUser.value.id) : null
+      metodoPago: saleForm.value.metodoPago,
+      usuarioId: currentUser.value ? (currentUser.value._id || currentUser.value.id) : null
     }
     
     await MongoService.createSale(saleData)
     showSaleModal.value = false
-    alert("Venta registrada con éxito")
-    loadProducts() // Reload to update stock
+    alert("✅ Venta registrada con éxito")
+    loadProducts()
   } catch (e) {
     alert("Error al registrar venta: " + e.message)
   }
 }
 
 function formatPrice(value) {
-  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(value)
+  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(value || 0)
 }
 </script>
 
@@ -321,58 +443,111 @@ function formatPrice(value) {
         <button @click="goBack" class="back-button">←</button>
         <img src="/logo.svg" alt="Potenza Gym Logo" class="logo-small" />
         <div>
-          <h1>Ventas y Stock</h1>
-          <p class="subtitle">Gestiona productos y registra ventas</p>
+          <h1>Ventas e Inventario (POS)</h1>
+          <p class="subtitle">Control de stock, trazabilidad y cobro de productos</p>
         </div>
       </div>
-      <button v-if="isAdmin" @click="openCreateModal" class="create-button">+ Nuevo Producto</button>
-      <button v-if="isAdmin" @click="openGeneralStatsModal" class="stats-button">📊 Estadísticas</button>
+      <div class="header-actions">
+        <button v-if="canManageProducts" @click="openCreateModal" class="create-button">+ Nuevo Producto</button>
+        <button v-if="canManageProducts" @click="openGeneralStatsModal" class="stats-button">📊 Estadísticas</button>
+      </div>
+    </div>
+
+    <!-- Low Stock Alert Banner -->
+    <div v-if="lowStockProducts.length > 0" class="low-stock-banner">
+      <span class="alert-icon">⚠️</span>
+      <div class="alert-content">
+        <strong>Alerta de Bajo Stock:</strong>
+        <span>{{ lowStockProducts.length }} producto(s) con stock igual o inferior al mínimo requerido.</span>
+        <span class="low-stock-names">({{ lowStockProducts.map(p => p.nombre || p.name).join(', ') }})</span>
+      </div>
+    </div>
+
+    <!-- Toolbar: Search & Barcode Detector & Filter -->
+    <div class="toolbar-card">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input 
+          v-model="searchQuery" 
+          placeholder="Buscar por nombre o escanear código de barras..." 
+          class="search-input"
+        />
+        <span class="barcode-indicator" title="El escáner de código de barras USB/Bluetooth está activo en segundo plano">
+          🏷️ Escáner Activo
+        </span>
+      </div>
+      <div class="filter-box">
+        <label>Categoría:</label>
+        <select v-model="selectedCategory" class="category-select">
+          <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
+        </select>
+      </div>
     </div>
 
     <div class="content-area">
-      <div v-if="isLoading" class="loading">Cargando...</div>
+      <div v-if="isLoading" class="loading">Cargando catálogo e inventario...</div>
       
-      <div v-else-if="products.length === 0" class="empty-state">
-        <p>No hay productos registrados. Agrega uno nuevo.</p>
+      <div v-else-if="filteredProducts.length === 0" class="empty-state">
+        <p>No se encontraron productos que coincidan con la búsqueda.</p>
       </div>
 
       <div v-else class="products-list-container">
         <table class="products-table">
           <thead>
             <tr>
+              <th>Código</th>
               <th>Producto</th>
-              <th>Precio</th>
-              <th>Stock</th>
+              <th>Categoría</th>
+              <th>Precio Venta</th>
+              <th>Stock Actual</th>
               <th>Acciones</th>
-              <th>Historial</th>
+              <th>Trazabilidad</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="product in products" :key="product._id">
-              <td>
-                <div class="product-name">{{ product.name }}</div>
-                <div class="product-category">{{ product.category }}</div>
+            <tr v-for="product in filteredProducts" :key="product._id">
+              <td class="barcode-cell">
+                <code>{{ product.codigoBarras || product.barcode || '-' }}</code>
               </td>
-              <td class="price-cell">{{ formatPrice(product.price) }}</td>
               <td>
-                <span class="stock-badge" :class="{ 'low-stock': product.stock < 5, 'out-stock': product.stock === 0 }">
-                  {{ product.stock }} un.
+                <div class="product-name">{{ product.nombre || product.name }}</div>
+                <div class="product-desc" v-if="product.descripcion">{{ product.descripcion }}</div>
+              </td>
+              <td>
+                <span class="category-tag">{{ product.categoria || product.category || 'General' }}</span>
+              </td>
+              <td class="price-cell">
+                {{ formatPrice(product.precioVenta !== undefined ? product.precioVenta : product.price) }}
+              </td>
+              <td>
+                <span 
+                  class="stock-badge" 
+                  :class="{ 
+                    'low-stock': (product.stockActual !== undefined ? product.stockActual : product.stock) <= (product.stockMinimo || 5) && (product.stockActual !== undefined ? product.stockActual : product.stock) > 0, 
+                    'out-stock': (product.stockActual !== undefined ? product.stockActual : product.stock) === 0 
+                  }"
+                >
+                  {{ product.stockActual !== undefined ? product.stockActual : product.stock }} un.
                 </span>
               </td>
               <td class="actions-cell">
-                <button @click="openSaleModal(product)" class="sell-button-small" :disabled="product.stock === 0">
+                <button 
+                  @click="openSaleModal(product)" 
+                  class="sell-button-small" 
+                  :disabled="(product.stockActual !== undefined ? product.stockActual : product.stock) === 0"
+                >
                   Vender
                 </button>
-                <button v-if="isAdmin" @click="openStockModal(product)" class="stock-button-small" title="Ajustar Stock">📦</button>
-                <button v-if="isAdmin" @click="openPriceModal(product)" class="price-button-small" title="Actualizar Precio">$</button>
-                <div v-if="isAdmin" class="icon-actions">
+                <button v-if="canManageProducts" @click="openStockModal(product)" class="stock-button-small" title="Ajustar Stock (Trazabilidad)">📦 Stock</button>
+                <button v-if="canManageProducts" @click="openPriceModal(product)" class="price-button-small" title="Actualizar Precio">$ Precio</button>
+                <div v-if="canManageProducts" class="icon-actions">
                   <button @click="openEditModal(product)" class="icon-button" title="Editar">✏️</button>
                   <button @click="deleteProduct(product._id)" class="icon-button delete" title="Eliminar">🗑️</button>
                 </div>
               </td>
               <td>
                 <button @click="openHistoryModal(product)" class="history-link">
-                  {{ isAdmin ? 'Ver historial stock' : 'Ver ventas' }}
+                  {{ canManageProducts ? 'Trazabilidad' : 'Ver ventas' }}
                 </button>
               </td>
             </tr>
@@ -390,39 +565,68 @@ function formatPrice(value) {
         </div>
         <form @submit.prevent="saveProduct" class="modal-form">
           <div class="form-group">
-            <label>Nombre del Producto</label>
-            <input v-model="productForm.name" required placeholder="Ej. Proteína Whey" />
+            <label>Nombre del Producto *</label>
+            <input v-model="productForm.nombre" required placeholder="Ej. Proteína Whey 1kg" />
           </div>
+
           <div class="form-group row">
             <div class="col">
-              <label>Precio</label>
-              <input type="number" v-model="productForm.price" required min="0" />
+              <label>Código de Barras</label>
+              <input v-model="productForm.codigoBarras" placeholder="Escanea o escribe..." />
             </div>
             <div class="col">
-              <label>Stock Inicial</label>
-              <input type="number" v-model="productForm.stock" required min="0" />
+              <label>Categoría</label>
+              <input v-model="productForm.categoria" placeholder="Ej. Suplementos, Bebidas..." />
             </div>
           </div>
+
+          <div class="form-group row">
+            <div class="col">
+              <label>Precio Costo ($) *</label>
+              <input type="number" step="0.01" v-model="productForm.precioCosto" required min="0" />
+            </div>
+            <div class="col">
+              <label>Precio Venta ($) *</label>
+              <input type="number" step="0.01" v-model="productForm.precioVenta" required min="0" />
+            </div>
+          </div>
+
+          <div class="form-group row">
+            <div class="col">
+              <label>Stock Inicial *</label>
+              <input type="number" v-model="productForm.stockActual" required min="0" />
+            </div>
+            <div class="col">
+              <label>Stock Mínimo *</label>
+              <input type="number" v-model="productForm.stockMinimo" required min="0" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Descripción</label>
+            <input v-model="productForm.descripcion" placeholder="Detalles o especificaciones opcionales" />
+          </div>
+
           <div class="modal-actions">
             <button type="button" @click="showProductModal = false" class="cancel-button">Cancelar</button>
-            <button type="submit" class="submit-button">Guardar</button>
+            <button type="submit" class="submit-button">Guardar Producto</button>
           </div>
         </form>
       </div>
     </div>
 
-    <!-- Sale Modal -->
+    <!-- Sale POS Modal -->
     <div v-if="showSaleModal" class="modal-overlay" @click.self="showSaleModal = false">
       <div class="modal-content">
         <div class="modal-header">
-          <h2>Registrar Venta</h2>
+          <h2>Registrar Venta POS</h2>
           <button @click="showSaleModal = false" class="close-button">×</button>
         </div>
         <form @submit.prevent="registerSale" class="modal-form">
           <div class="product-summary">
             <h3>{{ saleForm.productName }}</h3>
-            <p>Precio Unitario: {{ formatPrice(saleForm.price) }}</p>
-            <p>Stock Disponible: {{ saleForm.maxStock }}</p>
+            <p>Precio Unitario: <strong>{{ formatPrice(saleForm.precioVenta) }}</strong></p>
+            <p>Stock Disponible: <strong>{{ saleForm.maxStock }} un.</strong></p>
           </div>
           
           <div class="form-group">
@@ -434,6 +638,17 @@ function formatPrice(value) {
               min="1" 
               :max="saleForm.maxStock" 
             />
+          </div>
+
+          <div class="form-group">
+            <label>Método de Pago *</label>
+            <select v-model="saleForm.metodoPago" required class="form-select">
+              <option value="EFECTIVO">💵 Efectivo</option>
+              <option value="MERCADO_PAGO">📱 Mercado Pago</option>
+              <option value="TRANSFERENCIA">🏦 Transferencia Bancaria</option>
+              <option value="DEBITO">💳 Tarjeta de Débito</option>
+              <option value="CREDITO">💳 Tarjeta de Crédito</option>
+            </select>
           </div>
 
           <div class="total-summary">
@@ -453,34 +668,42 @@ function formatPrice(value) {
     <div v-if="showStockModal" class="modal-overlay" @click.self="showStockModal = false">
       <div class="modal-content">
         <div class="modal-header">
-          <h2>Actualizar Stock</h2>
+          <h2>Ajuste de Inventario (Trazabilidad)</h2>
           <button @click="showStockModal = false" class="close-button">×</button>
         </div>
         <form @submit.prevent="updateStock" class="modal-form">
           <div class="product-summary">
             <h3>{{ stockForm.productName }}</h3>
-            <p>Stock Actual: {{ stockForm.currentStock }}</p>
+            <p>Stock Actual en Sistema: <strong>{{ stockForm.currentStock }} un.</strong></p>
           </div>
           
           <div class="form-group row">
-             <div class="col">
-                <label>Nuevo Stock</label>
-                <input type="number" v-model="stockForm.newStock" required min="0" />
-             </div>
+            <div class="col">
+              <label>Nuevo Stock Total</label>
+              <input type="number" v-model="stockForm.newStock" required min="0" />
+            </div>
+            <div class="col">
+              <label>Tipo de Movimiento</label>
+              <select v-model="stockForm.tipoMovimiento" class="form-select">
+                <option value="ENTRADA">📦 ENTRADA (Reabastecimiento)</option>
+                <option value="AJUSTE_MANUAL">✏️ AJUSTE MANUAL</option>
+                <option value="MERMA_PERDIDA">⚠️ MERMA / PERDIDA</option>
+              </select>
+            </div>
           </div>
 
           <div class="form-group">
-            <label>Motivo del Ajuste</label>
+            <label>Motivo del Ajuste (Obligatorio) *</label>
             <input 
-              v-model="stockForm.reason" 
+              v-model="stockForm.razon" 
               required 
-              placeholder="Ej. Reabastecimiento, Pérdida, Corrección..." 
+              placeholder="Ej. Ingreso de proveedor, Rotura, Recuento físico..." 
             />
           </div>
 
           <div class="modal-actions">
             <button type="button" @click="showStockModal = false" class="cancel-button">Cancelar</button>
-            <button type="submit" class="submit-button">Actualizar</button>
+            <button type="submit" class="submit-button">Registrar Movimiento</button>
           </div>
         </form>
       </div>
@@ -490,7 +713,7 @@ function formatPrice(value) {
     <div v-if="showPriceModal" class="modal-overlay" @click.self="showPriceModal = false">
       <div class="modal-content">
         <div class="modal-header">
-          <h2>Actualizar Precio</h2>
+          <h2>Actualizar Precio de Venta</h2>
           <button @click="showPriceModal = false" class="close-button">×</button>
         </div>
         <form @submit.prevent="updatePriceOnly" class="modal-form">
@@ -500,50 +723,60 @@ function formatPrice(value) {
           </div>
           
           <div class="form-group">
-             <label>Nuevo Precio</label>
-             <input type="number" v-model="priceForm.newPrice" required min="0" />
+             <label>Nuevo Precio de Venta ($)</label>
+             <input type="number" step="0.01" v-model="priceForm.newPrice" required min="0" />
           </div>
 
           <div class="modal-actions">
             <button type="button" @click="showPriceModal = false" class="cancel-button">Cancelar</button>
-            <button type="submit" class="submit-button">Actualizar</button>
+            <button type="submit" class="submit-button">Actualizar Precio</button>
           </div>
         </form>
       </div>
     </div>
 
-    <!-- History Modal -->
+    <!-- History / StockMovement Modal -->
     <div v-if="showHistoryModal" class="modal-overlay" @click.self="showHistoryModal = false">
       <div class="modal-content history-modal">
         <div class="modal-header">
-          <h2>Historial Stock: {{ historyProduct?.name }}</h2>
+          <h2>Trazabilidad de Stock: {{ historyProduct?.nombre || historyProduct?.name }}</h2>
           <button @click="showHistoryModal = false" class="close-button">×</button>
         </div>
         
-        <div v-if="historyLogs.length === 0" class="empty-history">
-          No hay cambios recientes.
+        <div v-if="historyMovements.length === 0" class="empty-history">
+          No hay movimientos de stock registrados para este producto.
         </div>
         
-        <table v-else class="history-table">
-          <thead>
-            <tr>
-              <th>Fecha</th>
-              <th>Cambio</th>
-              <th>Nuevo Stock</th>
-              <th>Motivo</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="log in historyLogs" :key="log._id">
-              <td class="date-cell">{{ formatDate(log.date) }}</td>
-              <td :class="log.change >= 0 ? 'positive' : 'negative'">
-                {{ log.change > 0 ? '+' : '' }}{{ log.change }}
-              </td>
-              <td>{{ log.newStock }}</td>
-              <td>{{ log.reason }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-else class="table-scroll-container">
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th>Fecha y Hora</th>
+                <th>Usuario</th>
+                <th>Tipo</th>
+                <th>Cambio</th>
+                <th>Nuevo Stock</th>
+                <th>Motivo</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="mov in historyMovements" :key="mov._id">
+                <td class="date-cell">{{ formatDate(mov.fechaHora || mov.createdAt) }}</td>
+                <td>{{ mov.usuarioId?.nombre || mov.usuarioId?.username || 'Sistema' }}</td>
+                <td>
+                  <span class="movement-tag" :class="mov.tipoMovimiento">
+                    {{ mov.tipoMovimiento }}
+                  </span>
+                </td>
+                <td :class="mov.cantidadCambio >= 0 ? 'positive' : 'negative'">
+                  {{ mov.cantidadCambio > 0 ? '+' : '' }}{{ mov.cantidadCambio }}
+                </td>
+                <td><strong>{{ mov.cantidadNueva }}</strong></td>
+                <td>{{ mov.razon }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -551,7 +784,7 @@ function formatPrice(value) {
     <div v-if="showSalesStatsModal" class="modal-overlay" @click.self="showSalesStatsModal = false">
       <div class="modal-content history-modal">
         <div class="modal-header">
-          <h2>Resumen Ventas: {{ historyProduct?.name }}</h2>
+          <h2>Resumen Ventas: {{ historyProduct?.nombre || historyProduct?.name }}</h2>
           <button @click="showSalesStatsModal = false" class="close-button">×</button>
         </div>
         
@@ -564,7 +797,7 @@ function formatPrice(value) {
           </div>
 
           <div class="breakdown-section">
-            <h3>Desglose por Entrenador</h3>
+            <h3>Desglose por Vendedor</h3>
             <div v-if="salesStats.breakdown.length === 0" class="empty-history">
               No hay ventas registradas.
             </div>
@@ -621,7 +854,7 @@ function formatPrice(value) {
         </div>
 
         <div class="modal-body">
-        <div class="stats-filter-row">
+          <div class="stats-filter-row">
             <div class="form-group">
                 <label>Desde:</label>
                 <DateField
@@ -639,71 +872,71 @@ function formatPrice(value) {
                 />
             </div>
             <button @click="loadGeneralStats" class="submit-button" style="margin-top: auto; padding: 10px;">Filtrar</button>
-        </div>
+          </div>
 
-        <div v-if="isLoadingStats" class="loading">Cargando...</div>
+          <div v-if="isLoadingStats" class="loading">Cargando...</div>
 
-        <div v-else-if="generalStats" class="stats-container">
+          <div v-else-if="generalStats" class="stats-container">
             <div class="total-sold-card">
-              <h3>Recaudación Total</h3>
+              <h3>Recaudación Total (Productos POS)</h3>
               <p class="big-number">{{ formatPrice(generalStats.totalRevenue) }}</p>
               <p class="small-text">{{ generalStats.totalSalesCount }} ventas registradas</p>
             </div>
 
             <div class="breakdown-section">
-            <h3>Detalle por Vendedor</h3>
-            <div v-if="generalStats.breakdown.length === 0" class="empty-history">
+              <h3>Detalle por Vendedor</h3>
+              <div v-if="generalStats.breakdown.length === 0" class="empty-history">
                 No hay ventas en este periodo.
-            </div>
-            <div v-else class="table-scroll-container">
-            <table class="history-table">
-                <thead>
-                <tr>
-                    <th>Vendedor</th>
-                    <th>Ventas</th>
-                    <th>Recaudado</th>
-                </tr>
-                </thead>
-                <tbody>
-                <template v-for="item in generalStats.breakdown" :key="item.name">
+              </div>
+              <div v-else class="table-scroll-container">
+                <table class="history-table">
+                  <thead>
                     <tr>
+                      <th>Vendedor</th>
+                      <th>Ventas</th>
+                      <th>Recaudado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template v-for="item in generalStats.breakdown" :key="item.name">
+                      <tr>
                         <td>
-                            <button @click="toggleSeller(item.name)" class="expand-button">
-                                {{ expandedSellers.includes(item.name) ? '▼' : '▶' }}
-                            </button>
-                            {{ item.name }}
+                          <button @click="toggleSeller(item.name)" class="expand-button">
+                            {{ expandedSellers.includes(item.name) ? '▼' : '▶' }}
+                          </button>
+                          {{ item.name }}
                         </td>
                         <td class="positive">{{ item.salesCount }}</td>
                         <td class="price-cell">{{ formatPrice(item.revenue) }}</td>
-                    </tr>
-                    <tr v-if="expandedSellers.includes(item.name)" class="details-row">
+                      </tr>
+                      <tr v-if="expandedSellers.includes(item.name)" class="details-row">
                         <td colspan="3">
-                            <div class="product-details-container">
-                                <table class="details-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Producto</th>
-                                            <th>Cant.</th>
-                                            <th>Total</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <tr v-for="prod in item.products" :key="prod.name">
-                                            <td>{{ prod.name }}</td>
-                                            <td>{{ prod.quantity }}</td>
-                                            <td>{{ formatPrice(prod.revenue) }}</td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
+                          <div class="product-details-container">
+                            <table class="details-table">
+                              <thead>
+                                <tr>
+                                  <th>Producto</th>
+                                  <th>Cant.</th>
+                                  <th>Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr v-for="prod in item.products" :key="prod.name">
+                                  <td>{{ prod.name }}</td>
+                                  <td>{{ prod.quantity }}</td>
+                                  <td>{{ formatPrice(prod.revenue) }}</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
                         </td>
-                    </tr>
-                </template>
-                </tbody>
-            </table>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
             </div>
-            </div>
-        </div>
+          </div>
         </div>
       </div>
     </div>
@@ -724,7 +957,7 @@ function formatPrice(value) {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
   flex-wrap: wrap;
   gap: 16px;
 }
@@ -733,6 +966,12 @@ function formatPrice(value) {
   display: flex;
   align-items: center;
   gap: 16px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
 }
 
 .back-button {
@@ -776,6 +1015,109 @@ h1 {
   min-height: 44px;
 }
 
+/* Banner de Alerta Stock Mínimo */
+.low-stock-banner {
+  background-color: #fef2f2;
+  border: 2px solid #ef4444;
+  border-radius: 12px;
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  color: #991b1b;
+}
+
+[data-theme="dark"] .low-stock-banner {
+  background-color: #450a0a;
+  border-color: #f87171;
+  color: #fca5a5;
+}
+
+.alert-icon {
+  font-size: 1.5rem;
+}
+
+.alert-content {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 0.95rem;
+}
+
+.low-stock-names {
+  font-style: italic;
+  opacity: 0.9;
+}
+
+/* Toolbar & Scanner */
+.toolbar-card {
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--input-border);
+  flex-wrap: wrap;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 280px;
+  background: var(--input-bg);
+  border: 2px solid var(--input-border);
+  border-radius: 8px;
+  padding: 6px 12px;
+}
+
+.search-input {
+  border: none;
+  background: transparent;
+  width: 100%;
+  color: var(--text-color);
+  font-size: 0.95rem;
+  outline: none;
+}
+
+.barcode-indicator {
+  font-size: 0.75rem;
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.filter-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-box label {
+  font-weight: 600;
+  color: var(--header-text);
+  font-size: 0.9rem;
+}
+
+.category-select, .form-select {
+  padding: 10px;
+  border-radius: 8px;
+  border: 2px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-color);
+  font-size: 0.95rem;
+  outline: none;
+}
+
 /* Table Layout */
 .products-list-container {
   overflow-x: auto;
@@ -788,7 +1130,7 @@ h1 {
 .products-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 600px;
+  min-width: 750px;
 }
 
 .products-table th {
@@ -811,15 +1153,35 @@ h1 {
   border-bottom: none;
 }
 
+.barcode-cell code {
+  background: var(--input-bg);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.85rem;
+  border: 1px dashed var(--input-border);
+}
+
 .product-name {
   font-weight: 600;
   color: var(--header-text);
   font-size: 1rem;
 }
 
-.product-category {
+.product-desc {
   font-size: 0.8rem;
   color: var(--subtitle-text);
+  margin-top: 2px;
+}
+
+.category-tag {
+  background: var(--input-bg);
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--subtitle-text);
+  border: 1px solid var(--input-border);
 }
 
 .price-cell {
@@ -834,25 +1196,26 @@ h1 {
   background-color: var(--input-bg);
   border: 1px solid var(--input-border);
   font-size: 0.9rem;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .stock-badge.low-stock {
-  background-color: #fef08a; /* yellow-200 */
-  color: #854d0e; /* yellow-800 */
+  background-color: #fef08a;
+  color: #854d0e;
   border-color: #eab308;
 }
 
 .stock-badge.out-stock {
-  background-color: #fecaca; /* red-200 */
-  color: #991b1b; /* red-800 */
+  background-color: #fecaca;
+  color: #991b1b;
   border-color: #ef4444;
 }
 
 .actions-cell {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .sell-button-small {
@@ -862,7 +1225,7 @@ h1 {
   padding: 6px 12px;
   border-radius: 6px;
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -877,70 +1240,54 @@ h1 {
   border: 1px solid var(--rheb-primary-green);
   padding: 6px 10px;
   border-radius: 8px;
-  font-size: 1.1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
   display: flex;
   align-items: center;
-  justify-content: center;
-  min-height: 38px;
-}
-
-.stock-button-small:hover {
-  background-color: var(--rheb-primary-green);
-  border-color: var(--rheb-black);
-  transform: translateY(-1px);
+  gap: 4px;
 }
 
 .price-button-small {
-  background-color: #dcfce7; /* green-100 */
-  color: #166534; /* green-800 */
+  background-color: #dcfce7;
+  color: #166534;
   border: 1px solid #22c55e;
   padding: 6px 10px;
   border-radius: 8px;
-  font-size: 1.1rem;
+  font-size: 0.85rem;
   font-weight: 700;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .icon-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
 }
 
 .icon-button {
   background-color: var(--input-bg);
   border: 1px solid var(--input-border);
-  font-size: 1.1rem;
+  font-size: 1rem;
   cursor: pointer;
   padding: 6px;
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
-  min-height: 38px;
-  width: 38px;
+  min-height: 34px;
+  width: 34px;
 }
 
 .icon-button:hover {
   border-color: var(--rheb-primary-green);
   background-color: var(--rheb-dark-grey);
   color: var(--rheb-primary-green);
-  transform: translateY(-1px);
 }
 
 .icon-button.delete:hover {
   border-color: #ef4444;
   background-color: #fee2e2;
-}
-
-[data-theme="dark"] .icon-button.delete:hover {
-  background-color: #450a0a;
 }
 
 .history-link {
@@ -949,110 +1296,8 @@ h1 {
   color: var(--rheb-primary-green);
   text-decoration: underline;
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 600;
-  padding: 0;
-}
-
-.history-link:hover {
-  filter: brightness(1.2);
-}
-
-
-.history-modal {
-  max-width: 600px;
-  width: 95%;
-  max-height: 90vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: 0;
-}
-
-.modal-header {
-  padding: 24px;
-  background: var(--card-bg);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid var(--input-border);
-  z-index: 10;
-}
-
-.modal-header.centered {
-  flex-direction: column;
-  text-align: center;
-  position: relative;
-  padding-bottom: 16px;
-}
-
-.modal-header.centered h2 {
-  margin: 0;
-  width: 100%;
-}
-
-.modal-header.centered .close-button {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-}
-
-.modal-body {
-  padding: 24px;
-  overflow-y: auto;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  align-items: center; /* Center children horizontally */
-}
-
-.modal-body > * {
-  width: 100%; /* Ensure they take full width but honor their own constraints */
-}
-
-.history-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 10px;
-}
-
-.history-table th {
-  text-align: left;
-  border-bottom: 2px solid var(--potenza-yellow);
-  padding: 8px;
-  font-size: 0.9rem;
-  color: var(--header-text);
-}
-
-.history-table td {
-  border-bottom: 1px solid var(--input-border);
-  padding: 8px;
-  font-size: 0.9rem;
-  color: var(--text-color);
-}
-
-.date-cell {
-  font-size: 0.8rem;
-  color: var(--subtitle-text);
-}
-
-.positive {
-  color: #16a34a;
-  font-weight: 600;
-}
-
-.negative {
-  color: #dc2626;
-  font-weight: 600;
-}
-
-.empty-history {
-  text-align: center;
-  color: var(--subtitle-text);
-  padding: 40px 20px;
-  font-style: italic;
-  width: 100%;
 }
 
 /* Modals */
@@ -1072,7 +1317,7 @@ h1 {
   border-radius: 16px;
   padding: 24px;
   width: 100%;
-  max-width: 450px;
+  max-width: 480px;
   border: 2px solid var(--potenza-yellow);
 }
 
@@ -1106,20 +1351,24 @@ h1 {
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .form-group label {
   color: var(--header-text);
   font-weight: 600;
+  font-size: 0.9rem;
 }
 
-.form-group input {
-  padding: 12px;
+.form-group input, .form-group select {
+  padding: 10px 12px;
   border: 2px solid var(--input-border);
   border-radius: 8px;
   font-size: 1rem;
   width: 100%;
+  background: var(--input-bg);
+  color: var(--text-color);
+  box-sizing: border-box;
 }
 
 .form-group.row {
@@ -1132,8 +1381,8 @@ h1 {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  min-width: 0; /* Prevents flex overflow */
+  gap: 6px;
+  min-width: 0;
 }
 
 .modal-actions {
@@ -1172,12 +1421,12 @@ h1 {
 }
 
 .product-summary h3 {
-  margin: 0 0 8px 0;
+  margin: 0 0 6px 0;
   color: var(--header-text);
 }
 
 .product-summary p {
-  margin: 4px 0;
+  margin: 2px 0;
   color: var(--subtitle-text);
   font-size: 0.9rem;
 }
@@ -1196,6 +1445,35 @@ h1 {
 .total-amount {
   color: var(--potenza-yellow);
 }
+
+.history-modal {
+  max-width: 680px;
+  width: 95%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.table-scroll-container {
+  overflow-x: auto;
+  padding: 0 16px 16px 16px;
+}
+
+.movement-tag {
+  font-size: 0.75rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 700;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+}
+
+.movement-tag.ENTRADA { background: #dcfce7; color: #166534; }
+.movement-tag.SALIDA_VENTA { background: #dbeafe; color: #1e40af; }
+.movement-tag.MERMA_PERDIDA { background: #fee2e2; color: #991b1b; }
+.movement-tag.AJUSTE_MANUAL { background: #fef3c7; color: #92400e; }
 
 .loading, .empty-state {
   text-align: center;
@@ -1238,12 +1516,6 @@ h1 {
   margin-left: 8px;
 }
 
-.breakdown-section h3 {
-  font-size: 1.1rem;
-  color: var(--header-text);
-  margin-bottom: 12px;
-}
-
 .stats-button {
   background: var(--potenza-dark-grey);
   color: var(--potenza-yellow);
@@ -1256,101 +1528,83 @@ h1 {
 }
 
 .stats-filter-row {
-    display: flex;
-    gap: 16px;
-    background: var(--input-bg);
-    padding: 16px;
-    border-radius: 12px;
-    align-items: flex-end;
-    justify-content: center;
-    border: 1px solid var(--input-border);
-    flex-wrap: wrap;
+  display: flex;
+  gap: 16px;
+  background: var(--input-bg);
+  padding: 16px;
+  border-radius: 12px;
+  align-items: flex-end;
+  justify-content: center;
+  border: 1px solid var(--input-border);
+  flex-wrap: wrap;
 }
 
 .stats-filter-row .form-group {
-    flex: 1;
-    min-width: 140px;
+  flex: 1;
+  min-width: 140px;
 }
 
 .small-text {
-    font-size: 0.9rem;
-    color: var(--subtitle-text);
-    margin-top: 4px;
+  font-size: 0.9rem;
+  color: var(--subtitle-text);
+  margin-top: 4px;
 }
 
 .expand-button {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--potenza-yellow);
-    font-size: 0.8rem;
-    width: 24px;
-    height: 24px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    margin-right: 8px;
-    padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--potenza-yellow);
+  font-size: 0.8rem;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 8px;
+  padding: 0;
 }
 
 .details-row td {
-    background-color: var(--input-bg);
-    padding: 0 !important;
+  background-color: var(--input-bg);
+  padding: 0 !important;
 }
 
 .product-details-container {
-    padding: 10px 20px;
+  padding: 10px 20px;
 }
 
 .details-table {
-    width: 100%;
-    font-size: 0.85rem;
+  width: 100%;
+  font-size: 0.85rem;
 }
 
 .details-table th {
-    color: var(--subtitle-text);
-    border-bottom: 1px solid var(--input-border);
-    padding: 4px;
-    font-weight: 600;
+  color: var(--subtitle-text);
+  border-bottom: 1px solid var(--input-border);
+  padding: 4px;
+  font-weight: 600;
 }
 
 .details-table td {
-    border-bottom: 1px solid rgba(255,255,255,0.05);
-    padding: 4px;
-    color: var(--text-color);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  padding: 4px;
+  color: var(--text-color);
 }
 
 @media (max-width: 768px) {
+  .toolbar-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .stats-filter-row {
-      flex-direction: column;
-      align-items: stretch;
+    flex-direction: column;
+    align-items: stretch;
   }
 
-  .form-group input {
-      width: 100%;
-      box-sizing: border-box; /* Prevent padding from adding to width */
-  }
-
-  .submit-button {
-      margin-top: 10px !important;
-      width: 100%;
-  }
-
-  .history-modal {
-      width: 95%;
-      padding: 0;
-      max-height: 85vh;
-  }
-
-  .history-table th, .history-table td {
-      padding: 8px 4px;
-      font-size: 0.85rem;
-  }
-
-  .table-scroll-container {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    width: 100%;
+  .form-group.row {
+    flex-direction: column;
   }
 }
 </style>

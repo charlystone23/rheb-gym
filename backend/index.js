@@ -7,6 +7,7 @@ const Expense = require('./models/Expense');
 
 const Sale = require('./models/Sale');
 const StockLog = require('./models/StockLog');
+const StockMovement = require('./models/StockMovement');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -95,7 +96,7 @@ app.get('/api/health', (req, res) => {
 const UserSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true },
     password: { type: String, required: true }, // En producción: hashear contraseña
-    role: { type: String, enum: ['admin', 'entrenador'], default: 'entrenador' },
+    role: { type: String, enum: ['admin', 'ADMIN_VENTAS', 'ADMIN', 'entrenador'], default: 'entrenador' },
     nombre: { type: String },
     estado: { type: String, enum: ['activo', 'inactivo'], default: 'activo' },
     fechaInactivacion: { type: Date, default: null },
@@ -1274,22 +1275,117 @@ app.delete('/api/expenses/:id', async (req, res) => {
 });
 
 
+// --- RBAC MIDDLEWARE HELPER ---
+function requireRole(allowedRoles) {
+    return (req, res, next) => {
+        const role = (
+            req.headers['x-user-role'] ||
+            req.body.actorRole ||
+            req.body.userRole ||
+            req.query.actorRole ||
+            ''
+        ).toString().toUpperCase();
+
+        const allowed = allowedRoles.map(r => r.toUpperCase());
+
+        if (!role || !allowed.includes(role)) {
+            return res.status(403).json({
+                error: `Acceso restringido. Se requiere rol: ${allowedRoles.join(' o ')}`
+            });
+        }
+        next();
+    };
+}
+
 // --- PRODUCT ROUTES ---
 
-// GET All Products
+// GET All Products (supporting barcode & text search)
 app.get('/api/products', async (req, res) => {
     try {
-        const products = await Product.find().sort({ name: 1 });
+        const { codigoBarras, search, category, activeOnly } = req.query;
+        const filter = {};
+
+        if (codigoBarras) {
+            filter.codigoBarras = codigoBarras;
+        }
+
+        if (search) {
+            filter.$or = [
+                { nombre: { $regex: search, $options: 'i' } },
+                { codigoBarras: { $regex: search, $options: 'i' } },
+                { categoria: { $regex: search, $options: 'i' } }
+            ];
+        }
+
+        if (category) {
+            filter.categoria = category;
+        }
+
+        if (activeOnly === 'true') {
+            filter.activo = true;
+        }
+
+        const products = await Product.find(filter).sort({ nombre: 1, name: 1 });
         res.json(products);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// CREATE Product
-app.post('/api/products', async (req, res) => {
+// GET Product by ID or Barcode
+app.get('/api/products/search/:query', async (req, res) => {
     try {
-        const newProduct = new Product(req.body);
+        const { query } = req.params;
+        let product = null;
+
+        // Try exact barcode match first
+        product = await Product.findOne({ codigoBarras: query });
+
+        if (!product && mongoose.Types.ObjectId.isValid(query)) {
+            product = await Product.findById(query);
+        }
+
+        if (!product) {
+            product = await Product.findOne({ nombre: { $regex: query, $options: 'i' } });
+        }
+
+        if (!product) {
+            return res.status(404).json({ error: 'Producto no encontrado' });
+        }
+
+        res.json(product);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// CREATE Product (Allowed ONLY for ADMIN_VENTAS or ADMIN)
+app.post('/api/products', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin']), async (req, res) => {
+    try {
+        const {
+            nombre, name,
+            codigoBarras,
+            descripcion,
+            precioVenta, price,
+            precioCosto,
+            stockActual, stock,
+            stockMinimo,
+            categoria, category,
+            activo
+        } = req.body;
+
+        const newProduct = new Product({
+            nombre: nombre || name,
+            codigoBarras: codigoBarras || null,
+            descripcion: descripcion || '',
+            precioVenta: precioVenta !== undefined ? precioVenta : (price || 0),
+            precioCosto: precioCosto !== undefined ? precioCosto : 0,
+            stockActual: stockActual !== undefined ? stockActual : (stock || 0),
+            stockMinimo: stockMinimo !== undefined ? stockMinimo : 5,
+            categoria: categoria || category || 'General',
+            activo: activo !== undefined ? activo : true
+        });
+
         const savedProduct = await newProduct.save();
         res.status(201).json(savedProduct);
     } catch (err) {
@@ -1297,11 +1393,17 @@ app.post('/api/products', async (req, res) => {
     }
 });
 
-// UPDATE Product
-app.put('/api/products/:id', async (req, res) => {
+// UPDATE Product (Allowed ONLY for ADMIN_VENTAS or ADMIN)
+app.put('/api/products/:id', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin']), async (req, res) => {
     try {
         const { id } = req.params;
-        const updatedProduct = await Product.findByIdAndUpdate(id, req.body, { new: true });
+        const updateData = { ...req.body };
+
+        if (updateData.name && !updateData.nombre) updateData.nombre = updateData.name;
+        if (updateData.price && !updateData.precioVenta) updateData.precioVenta = updateData.price;
+        if (updateData.stock && updateData.stockActual === undefined) updateData.stockActual = updateData.stock;
+
+        const updatedProduct = await Product.findByIdAndUpdate(id, updateData, { new: true, runValidators: true });
         if (!updatedProduct) return res.status(404).json({ error: 'Producto no encontrado' });
         res.json(updatedProduct);
     } catch (err) {
@@ -1309,43 +1411,108 @@ app.put('/api/products/:id', async (req, res) => {
     }
 });
 
-// UPDATE Product Stock (Manual Adjustment)
+// ADJUST STOCK (Allowed for ALL authenticated users, requiring 'razon')
 app.post('/api/products/:id/adjust-stock', async (req, res) => {
+    let session = null;
+    try {
+        session = await mongoose.startSession();
+        session.startTransaction();
+    } catch (e) {
+        session = null;
+    }
+
     try {
         const { id } = req.params;
-        const { newStock, reason } = req.body;
+        const {
+            cantidadNueva, newStock,
+            cantidadCambio, change,
+            razon,
+            usuarioId, actorUserId, seller,
+            tipoMovimiento
+        } = req.body;
 
-        const product = await Product.findById(id);
-        if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
+        if (!razon || !String(razon).trim()) {
+            if (session) await session.abortTransaction();
+            return res.status(400).json({ error: 'El campo razon es obligatorio para registrar la trazabilidad' });
+        }
 
-        const previousStock = product.stock;
-        const change = newStock - previousStock;
+        const product = await Product.findById(id).session(session || null);
+        if (!product) {
+            if (session) await session.abortTransaction();
+            return res.status(404).json({ error: 'Producto no encontrado' });
+        }
 
-        // Update Product
-        product.stock = newStock;
-        await product.save();
+        const previousStock = product.stockActual;
+        let targetStock = previousStock;
 
-        // Create Log
+        if (cantidadNueva !== undefined) {
+            targetStock = Number(cantidadNueva);
+        } else if (newStock !== undefined) {
+            targetStock = Number(newStock);
+        } else if (cantidadCambio !== undefined) {
+            targetStock = previousStock + Number(cantidadCambio);
+        } else if (change !== undefined) {
+            targetStock = previousStock + Number(change);
+        }
+
+        const actualDelta = targetStock - previousStock;
+        product.stockActual = targetStock;
+        await product.save({ session: session || undefined });
+
+        const userIdToUse = usuarioId || actorUserId || seller || req.headers['x-user-id'] || product._id;
+        const movementType = tipoMovimiento || (actualDelta >= 0 ? 'ENTRADA' : 'AJUSTE_MANUAL');
+
+        const movement = new StockMovement({
+            productoId: product._id,
+            usuarioId: userIdToUse,
+            tipoMovimiento: movementType,
+            cantidadAnterior: previousStock,
+            cantidadCambio: actualDelta,
+            cantidadNueva: targetStock,
+            razon: String(razon).trim()
+        });
+
+        await movement.save({ session: session || undefined });
+
+        // Backward compatibility log
         const log = new StockLog({
             product: id,
             previousStock,
-            newStock,
-            change,
-            reason
+            newStock: targetStock,
+            change: actualDelta,
+            reason: String(razon).trim()
         });
-        await log.save();
+        await log.save({ session: session || undefined });
 
-        res.json({ message: 'Stock actualizado', product, log });
+        if (session) await session.commitTransaction();
+
+        res.json({ message: 'Stock actualizado correctamente', product, movement, log });
     } catch (err) {
+        if (session) await session.abortTransaction();
         res.status(400).json({ error: err.message });
+    } finally {
+        if (session) session.endSession();
     }
 });
 
-// GET Product Stock Logs
+// GET Product Stock Movements
+app.get('/api/products/:id/stock-movements', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const movements = await StockMovement.find({ productoId: id })
+            .populate('usuarioId', 'nombre username role')
+            .sort({ fechaHora: -1 });
+        res.json(movements);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET Legacy Stock Logs
 app.get('/api/products/:id/stock-logs', async (req, res) => {
     try {
         const { id } = req.params;
-        const logs = await StockLog.find({ product: id }).sort({ date: -1 }).limit(5);
+        const logs = await StockLog.find({ product: id }).sort({ date: -1 }).limit(10);
         res.json(logs);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1353,85 +1520,132 @@ app.get('/api/products/:id/stock-logs', async (req, res) => {
 });
 
 // DELETE Product
-app.delete('/api/products/:id', async (req, res) => {
+app.delete('/api/products/:id', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin']), async (req, res) => {
     try {
         const { id } = req.params;
         const deleted = await Product.findByIdAndDelete(id);
         if (!deleted) return res.status(404).json({ error: 'Producto no encontrado' });
 
-        // Cascading Delete: Clean up sales
-        const sales = await Sale.find({ "items.product": id });
-
-        for (const sale of sales) {
-            // Filter out the deleted product
-            const originalLength = sale.items.length;
-            sale.items = sale.items.filter(item => item.product.toString() !== id);
-
-            if (sale.items.length === 0) {
-                // If no items left, delete the sale entirely
-                await Sale.findByIdAndDelete(sale._id);
-            } else if (sale.items.length < originalLength) {
-                // Recalculate total if items were removed
-                sale.total = sale.items.reduce((acc, item) => acc + (item.price * item.quantity), 0);
-                await sale.save();
-            }
-        }
-
-        res.json({ message: 'Producto y sus ventas asociadas eliminados' });
+        res.json({ message: 'Producto eliminado correctamente' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// --- SALES ROUTES ---
+// --- SALES / POS ROUTES ---
 
-// CREATE Sale (and update stock)
-// CREATE Sale (and update stock)
+// CREATE Sale (Atomic Transaction with Stock validation & StockMovement trace)
 app.post('/api/sales', async (req, res) => {
+    let session = null;
     try {
-        const { items, total, seller } = req.body; // items: [{ product: id, quantity: n, price: p }]
+        session = await mongoose.startSession();
+        session.startTransaction();
+    } catch (e) {
+        session = null;
+    }
 
-        // Validate stock and prepare bulk updates
-        const bulkOps = [];
-        for (const item of items) {
-            const product = await Product.findById(item.product);
-            if (!product) {
-                return res.status(404).json({ error: `Producto con ID ${item.product} no encontrado` });
-            }
-            if (product.stock < item.quantity) {
-                return res.status(400).json({ error: `Stock insuficiente para ${product.name}. Disponible: ${product.stock}` });
-            }
+    try {
+        const { items, total, metodoPago, usuarioId, seller, actorUserId } = req.body;
+        const userIdToRecord = usuarioId || seller || actorUserId || req.headers['x-user-id'];
 
-            // Push update operation
-            bulkOps.push({
-                updateOne: {
-                    filter: { _id: item.product },
-                    update: { $inc: { stock: -item.quantity } }
-                }
-            });
-
-            // Save product name in sale item (in case product is deleted later)
-            item.name = product.name;
+        if (!items || !Array.isArray(items) || items.length === 0) {
+            if (session) await session.abortTransaction();
+            return res.status(400).json({ error: 'La venta debe incluir al menos un producto' });
         }
 
-        // Execute bulk write to update stocks
-        await Product.bulkWrite(bulkOps);
+        const processedItems = [];
+        const stockMovementsToCreate = [];
+        let calculatedTotal = 0;
 
-        // Create Sale Record
-        const newSale = new Sale({ items, total, seller });
-        const savedSale = await newSale.save();
+        for (const item of items) {
+            const productId = item.productoId || item.product || item._id;
+            const quantity = Number(item.cantidad || item.quantity || 1);
+
+            if (!productId) {
+                if (session) await session.abortTransaction();
+                return res.status(400).json({ error: 'Cada ítem debe incluir la referencia del producto' });
+            }
+
+            const product = await Product.findById(productId).session(session || null);
+            if (!product) {
+                if (session) await session.abortTransaction();
+                return res.status(404).json({ error: `Producto no encontrado (ID: ${productId})` });
+            }
+
+            if (product.stockActual < quantity) {
+                if (session) await session.abortTransaction();
+                return res.status(400).json({
+                    error: `Stock insuficiente para "${product.nombre}". Disponible: ${product.stockActual}, Solicitado: ${quantity}`
+                });
+            }
+
+            const unitPrice = Number(item.precioUnitario !== undefined ? item.precioUnitario : (item.price || product.precioVenta));
+            const subtotal = unitPrice * quantity;
+            calculatedTotal += subtotal;
+
+            const previousStock = product.stockActual;
+            const newStock = previousStock - quantity;
+
+            // Reduce stock atomically
+            product.stockActual = newStock;
+            await product.save({ session: session || undefined });
+
+            processedItems.push({
+                productoId: product._id,
+                nombre: product.nombre,
+                cantidad: quantity,
+                precioUnitario: unitPrice,
+                subtotal: subtotal
+            });
+
+            stockMovementsToCreate.push({
+                productoId: product._id,
+                usuarioId: userIdToRecord || product._id,
+                tipoMovimiento: 'SALIDA_VENTA',
+                cantidadAnterior: previousStock,
+                cantidadCambio: -quantity,
+                cantidadNueva: newStock,
+                razon: 'Venta POS'
+            });
+        }
+
+        const finalTotal = total !== undefined ? Number(total) : calculatedTotal;
+
+        const newSale = new Sale({
+            items: processedItems,
+            total: finalTotal,
+            metodoPago: metodoPago || 'EFECTIVO',
+            usuarioId: userIdToRecord || null,
+            fechaHora: new Date()
+        });
+
+        const savedSale = await newSale.save({ session: session || undefined });
+
+        for (const movementData of stockMovementsToCreate) {
+            movementData.razon = `Venta POS #${savedSale._id}`;
+            const movement = new StockMovement(movementData);
+            await movement.save({ session: session || undefined });
+        }
+
+        if (session) await session.commitTransaction();
 
         res.status(201).json(savedSale);
-
     } catch (err) {
+        if (session) await session.abortTransaction();
         res.status(400).json({ error: err.message });
+    } finally {
+        if (session) session.endSession();
     }
 });
 
 // GET Recent Sales
 app.get('/api/sales', async (req, res) => {
     try {
-        const sales = await Sale.find().populate('seller', 'nombre apellido').sort({ date: -1 }).limit(50);
+        const sales = await Sale.find()
+            .populate('usuarioId', 'nombre apellido username role')
+            .populate('seller', 'nombre apellido')
+            .sort({ fechaHora: -1, date: -1 })
+            .limit(50);
         res.json(sales);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1444,39 +1658,45 @@ app.get('/api/products/:id/sales-stats', async (req, res) => {
         const { id } = req.params;
         const { sellerId } = req.query;
 
-        const filter = { "items.product": id };
+        const filter = {
+            $or: [
+                { "items.productoId": id },
+                { "items.product": id }
+            ]
+        };
         if (sellerId) {
-            filter.seller = sellerId;
+            filter.$or.forEach(f => f.usuarioId = sellerId);
         }
 
-        // Find sales containing this product
-        const sales = await Sale.find(filter).populate('seller', 'nombre apellido').sort({ date: -1 });
+        const sales = await Sale.find(filter)
+            .populate('usuarioId', 'nombre apellido')
+            .populate('seller', 'nombre apellido')
+            .sort({ fechaHora: -1, date: -1 });
 
         let totalSold = 0;
         const salesByTrainer = {};
         const salesLog = [];
 
         sales.forEach(sale => {
-            const item = sale.items.find(i => i.product.toString() === id);
+            const item = sale.items.find(i => (i.productoId?.toString() === id || i.product?.toString() === id));
             if (item) {
-                totalSold += item.quantity;
-                const trainerName = sale.seller
-                    ? `${sale.seller.nombre} ${sale.seller.apellido || ''}`.trim()
+                totalSold += item.cantidad || item.quantity || 0;
+                const sellerObj = sale.usuarioId || sale.seller;
+                const trainerName = sellerObj
+                    ? `${sellerObj.nombre || ''} ${sellerObj.apellido || ''}`.trim()
                     : 'Desconocido/Admin';
 
-                // Aggregate for breakdown
                 if (!salesByTrainer[trainerName]) {
                     salesByTrainer[trainerName] = 0;
                 }
-                salesByTrainer[trainerName] += item.quantity;
+                salesByTrainer[trainerName] += item.cantidad || item.quantity || 0;
 
-                // Add to detailed log
                 salesLog.push({
                     _id: sale._id,
-                    date: sale.date,
+                    date: sale.fechaHora || sale.date,
                     sellerName: trainerName,
-                    quantity: item.quantity,
-                    amount: item.price * item.quantity
+                    quantity: item.cantidad || item.quantity,
+                    amount: (item.precioUnitario || item.price) * (item.cantidad || item.quantity)
                 });
             }
         });
@@ -1496,27 +1716,24 @@ app.get('/api/sales/general-stats', async (req, res) => {
         const filter = {};
 
         if (startDate && endDate) {
-            // Adjust dates to cover full days if needed, or assume frontend sends full ISO strings
             const start = new Date(startDate);
             start.setHours(0, 0, 0, 0);
             const end = new Date(endDate);
             end.setHours(23, 59, 59, 999);
 
-            filter.date = {
-                $gte: start,
-                $lte: end
-            };
+            filter.fechaHora = { $gte: start, $lte: end };
         }
 
-        const sales = await Sale.find(filter).populate('seller', 'nombre apellido');
+        const sales = await Sale.find(filter)
+            .populate('usuarioId', 'nombre apellido')
+            .populate('seller', 'nombre apellido');
 
         const statsBySeller = {};
         let totalRevenue = 0;
         let totalSalesCount = 0;
 
         sales.forEach(sale => {
-            const seller = sale.seller;
-            // Name Fix: Handle undefined lastname and trim
+            const seller = sale.usuarioId || sale.seller;
             const sellerName = seller
                 ? `${seller.nombre || ''} ${seller.apellido || ''}`.trim() || 'Sin Nombre'
                 : 'Desconocido/Admin';
@@ -1533,15 +1750,16 @@ app.get('/api/sales/general-stats', async (req, res) => {
             statsBySeller[sellerName].salesCount += 1;
             statsBySeller[sellerName].revenue += sale.total;
 
-            // Aggregate products
             if (sale.items && Array.isArray(sale.items)) {
                 sale.items.forEach(item => {
-                    const pName = item.name || 'Producto Desconocido';
+                    const pName = item.nombre || item.name || 'Producto Desconocido';
                     if (!statsBySeller[sellerName].products[pName]) {
                         statsBySeller[sellerName].products[pName] = { count: 0, revenue: 0 };
                     }
-                    statsBySeller[sellerName].products[pName].count += item.quantity;
-                    statsBySeller[sellerName].products[pName].revenue += (item.price * item.quantity);
+                    const cant = item.cantidad || item.quantity || 0;
+                    const price = item.precioUnitario || item.price || 0;
+                    statsBySeller[sellerName].products[pName].count += cant;
+                    statsBySeller[sellerName].products[pName].revenue += (price * cant);
                 });
             }
 
@@ -1549,7 +1767,6 @@ app.get('/api/sales/general-stats', async (req, res) => {
             totalRevenue += sale.total;
         });
 
-        // Convert breakdown
         const breakdown = Object.values(statsBySeller).map(seller => ({
             ...seller,
             products: Object.entries(seller.products).map(([name, stats]) => ({

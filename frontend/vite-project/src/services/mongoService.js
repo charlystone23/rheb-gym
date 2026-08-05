@@ -411,10 +411,17 @@ export const MongoService = {
         }
     },
 
-    // --- PRODUCTS ---
-    async getProducts() {
+    // --- PRODUCTS & INVENTORY ---
+    async getProducts(params = {}) {
         try {
-            const response = await fetch(`${API_URL}/products`);
+            const queryParams = new URLSearchParams();
+            if (params.codigoBarras) queryParams.append('codigoBarras', params.codigoBarras);
+            if (params.search) queryParams.append('search', params.search);
+            if (params.category) queryParams.append('category', params.category);
+            if (params.activeOnly) queryParams.append('activeOnly', 'true');
+
+            const queryStr = queryParams.toString();
+            const response = await fetch(`${API_URL}/products${queryStr ? `?${queryStr}` : ''}`);
             if (!response.ok) throw new Error('Error al obtener productos');
             return await response.json();
         } catch (error) {
@@ -423,60 +430,36 @@ export const MongoService = {
         }
     },
 
-    async createProduct(data) {
+    async searchProduct(query) {
         try {
+            const response = await fetch(`${API_URL}/products/search/${encodeURIComponent(query)}`);
+            if (!response.ok) return null;
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            return null;
+        }
+    },
+
+    async createProduct(data, actor = null) {
+        try {
+            const headers = { 'Content-Type': 'application/json' };
+            const userStr = localStorage.getItem('user');
+            if (userStr) {
+                const u = JSON.parse(userStr);
+                if (u?.role) headers['x-user-role'] = u.role;
+                if (u?._id) headers['x-user-id'] = u._id;
+            }
+            if (actor?.role) headers['x-user-role'] = actor.role;
+
             const response = await fetch(`${API_URL}/products`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
-            if (!response.ok) throw new Error('Error al crear producto');
-            return await response.json();
-        } catch (error) {
-            console.error("API Error:", error);
-            throw error;
-        }
-    },
-
-    async updateProduct(id, data) {
-        try {
-            const response = await fetch(`${API_URL}/products/${id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
-            if (!response.ok) throw new Error('Error al actualizar producto');
-            return await response.json();
-        } catch (error) {
-            console.error("API Error:", error);
-            throw error;
-        }
-    },
-
-    async deleteProduct(id) {
-        try {
-            const response = await fetch(`${API_URL}/products/${id}`, {
-                method: 'DELETE'
-            });
-            if (!response.ok) throw new Error('Error al eliminar producto');
-            return await response.json();
-        } catch (error) {
-            console.error("API Error:", error);
-            throw error;
-        }
-    },
-
-    // --- SALES ---
-    async createSale(data) {
-        try {
-            const response = await fetch(`${API_URL}/sales`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
+                headers,
+                body: JSON.stringify({ ...data, actorRole: actor?.role || headers['x-user-role'] })
             });
             if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err.error || 'Error al registrar venta');
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.error || 'Error al crear producto');
             }
             return await response.json();
         } catch (error) {
@@ -485,18 +468,104 @@ export const MongoService = {
         }
     },
 
-    async adjustStock(productId, newStock, reason) {
+    async updateProduct(id, data, actor = null) {
         try {
-            const response = await fetch(`${API_URL}/products/${productId}/adjust-stock`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ newStock, reason })
+            const headers = { 'Content-Type': 'application/json' };
+            const userStr = localStorage.getItem('user');
+            if (userStr) {
+                const u = JSON.parse(userStr);
+                if (u?.role) headers['x-user-role'] = u.role;
+                if (u?._id) headers['x-user-id'] = u._id;
+            }
+            if (actor?.role) headers['x-user-role'] = actor.role;
+
+            const response = await fetch(`${API_URL}/products/${id}`, {
+                method: 'PUT',
+                headers,
+                body: JSON.stringify({ ...data, actorRole: actor?.role || headers['x-user-role'] })
             });
-            if (!response.ok) throw new Error('Error al actualizar stock');
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.error || 'Error al actualizar producto');
+            }
             return await response.json();
         } catch (error) {
             console.error("API Error:", error);
             throw error;
+        }
+    },
+
+    async deleteProduct(id, actor = null) {
+        try {
+            const headers = {};
+            const userStr = localStorage.getItem('user');
+            if (userStr) {
+                const u = JSON.parse(userStr);
+                if (u?.role) headers['x-user-role'] = u.role;
+                if (u?._id) headers['x-user-id'] = u._id;
+            }
+            if (actor?.role) headers['x-user-role'] = actor.role;
+
+            const response = await fetch(`${API_URL}/products/${id}`, {
+                method: 'DELETE',
+                headers
+            });
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.error || 'Error al eliminar producto');
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
+    async adjustStock(productId, stockData, reasonText = '') {
+        try {
+            const headers = { 'Content-Type': 'application/json' };
+            let payload = {};
+
+            if (typeof stockData === 'object' && stockData !== null) {
+                payload = { ...stockData };
+            } else {
+                payload = { newStock: stockData, razon: reasonText };
+            }
+
+            const userStr = localStorage.getItem('user');
+            if (userStr) {
+                const u = JSON.parse(userStr);
+                if (u?._id && !payload.usuarioId) payload.usuarioId = u._id;
+                if (u?.role && !payload.actorRole) payload.actorRole = u.role;
+                if (u?._id) headers['x-user-id'] = u._id;
+                if (u?.role) headers['x-user-role'] = u.role;
+            }
+
+            const response = await fetch(`${API_URL}/products/${productId}/adjust-stock`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.error || 'Error al actualizar stock');
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
+    async getStockMovements(productId) {
+        try {
+            const response = await fetch(`${API_URL}/products/${productId}/stock-movements`);
+            if (!response.ok) throw new Error('Error al obtener movimientos de stock');
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            return [];
         }
     },
 
@@ -508,6 +577,36 @@ export const MongoService = {
         } catch (error) {
             console.error("API Error:", error);
             return [];
+        }
+    },
+
+    // --- SALES / POS ---
+    async createSale(data) {
+        try {
+            const headers = { 'Content-Type': 'application/json' };
+            const payload = { ...data };
+
+            const userStr = localStorage.getItem('user');
+            if (userStr) {
+                const u = JSON.parse(userStr);
+                if (u?._id && !payload.usuarioId) payload.usuarioId = u._id;
+                if (u?._id) headers['x-user-id'] = u._id;
+                if (u?.role) headers['x-user-role'] = u.role;
+            }
+
+            const response = await fetch(`${API_URL}/sales`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.error || 'Error al registrar venta');
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
         }
     },
 
