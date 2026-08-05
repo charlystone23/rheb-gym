@@ -46,7 +46,7 @@ const corsOptions = {
         }
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-user-role', 'x-user-id', 'X-User-Role', 'X-User-Id'],
     credentials: true,
     optionsSuccessStatus: 200
 };
@@ -1445,14 +1445,16 @@ app.post('/api/products', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin']), async
             activo
         } = req.body;
 
+        const cleanBarcode = (codigoBarras && codigoBarras.toString().trim() !== '') ? codigoBarras.toString().trim() : null;
+
         const newProduct = new Product({
-            nombre: nombre || name,
-            codigoBarras: codigoBarras || null,
+            nombre: (nombre || name || '').trim(),
+            codigoBarras: cleanBarcode,
             descripcion: descripcion || '',
-            precioVenta: precioVenta !== undefined ? precioVenta : (price || 0),
-            precioCosto: precioCosto !== undefined ? precioCosto : 0,
-            stockActual: stockActual !== undefined ? stockActual : (stock || 0),
-            stockMinimo: stockMinimo !== undefined ? stockMinimo : 0,
+            precioVenta: precioVenta !== undefined ? Number(precioVenta) : (Number(price) || 0),
+            precioCosto: precioCosto !== undefined ? Number(precioCosto) : 0,
+            stockActual: stockActual !== undefined ? Number(stockActual) : (Number(stock) || 0),
+            stockMinimo: stockMinimo !== undefined ? Number(stockMinimo) : 0,
             categoria: categoria || category || '',
             activo: activo !== undefined ? activo : true
         });
@@ -1460,6 +1462,9 @@ app.post('/api/products', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin']), async
         const savedProduct = await newProduct.save();
         res.status(201).json(savedProduct);
     } catch (err) {
+        if (err.code === 11000) {
+            return res.status(400).json({ error: 'El código de barras ingresado ya existe en otro producto.' });
+        }
         res.status(400).json({ error: err.message });
     }
 });
@@ -1474,10 +1479,19 @@ app.put('/api/products/:id', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin']), as
         if (updateData.price && !updateData.precioVenta) updateData.precioVenta = updateData.price;
         if (updateData.stock && updateData.stockActual === undefined) updateData.stockActual = updateData.stock;
 
+        if (updateData.codigoBarras !== undefined) {
+            updateData.codigoBarras = (updateData.codigoBarras && updateData.codigoBarras.toString().trim() !== '') 
+                ? updateData.codigoBarras.toString().trim() 
+                : null;
+        }
+
         const updatedProduct = await Product.findByIdAndUpdate(id, updateData, { new: true, runValidators: true });
         if (!updatedProduct) return res.status(404).json({ error: 'Producto no encontrado' });
         res.json(updatedProduct);
     } catch (err) {
+        if (err.code === 11000) {
+            return res.status(400).json({ error: 'El código de barras ingresado ya pertenece a otro producto.' });
+        }
         res.status(400).json({ error: err.message });
     }
 });

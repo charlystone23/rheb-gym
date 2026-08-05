@@ -147,21 +147,88 @@ async function handleBarcodeScan(code) {
 
 // --- Camera Barcode Reader (Mobile Camera) ---
 let html5QrcodeScanner = null
+const cameraScanMode = ref('POS') // 'POS' o 'PRODUCT_FORM'
+const showFocusRing = ref(false)
+const focusRingPos = ref({ x: 0, y: 0 })
+
+function openCameraScannerForPOS() {
+  cameraScanMode.value = 'POS'
+  openCameraScanner()
+}
+
+function openCameraScannerForProductForm() {
+  cameraScanMode.value = 'PRODUCT_FORM'
+  openCameraScanner()
+}
+
+async function handleCameraTap(e) {
+  const rect = e.currentTarget.getBoundingClientRect()
+  focusRingPos.value = {
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top
+  }
+  showFocusRing.value = true
+  setTimeout(() => { showFocusRing.value = false }, 800)
+
+  triggerFocus()
+}
+
+async function triggerFocus() {
+  if (!html5QrcodeScanner) return
+  try {
+    const track = html5QrcodeScanner.getRunningTrack()
+    if (track && track.getCapabilities) {
+      const caps = track.getCapabilities()
+      if (caps.focusMode) {
+        const mode = caps.focusMode.includes("continuous") ? "continuous" : (caps.focusMode.includes("single-shot") ? "single-shot" : null)
+        if (mode) {
+          await track.applyConstraints({ advanced: [{ focusMode: mode }] })
+        }
+      }
+    }
+  } catch (err) {
+    console.log("Focus trigger note:", err)
+  }
+}
 
 async function openCameraScanner() {
   showCameraModal.value = true
   await nextTick()
   try {
     html5QrcodeScanner = new Html5Qrcode("camera-reader")
+    const config = {
+      fps: 20,
+      qrbox: (w, h) => {
+        const minEdge = Math.min(w, h)
+        return {
+          width: Math.max(220, Math.floor(minEdge * 0.85)),
+          height: Math.max(120, Math.floor(minEdge * 0.45))
+        }
+      },
+      aspectRatio: 1.333333,
+      experimentalFeatures: {
+        useBarCodeDetectorIfSupported: true
+      }
+    }
+
     await html5QrcodeScanner.start(
       { facingMode: "environment" },
-      { fps: 10, qrbox: { width: 250, height: 150 } },
+      config,
       (decodedText) => {
+        const code = decodedText.trim()
         closeCameraScanner()
-        handleBarcodeScan(decodedText)
+        if (cameraScanMode.value === 'PRODUCT_FORM') {
+          productForm.value.codigoBarras = code
+        } else {
+          handleBarcodeScan(code)
+        }
       },
       () => {}
     )
+
+    setTimeout(() => {
+      triggerFocus()
+    }, 400)
   } catch (err) {
     console.error("Camera access error:", err)
     alert("No se pudo acceder a la cámara. Asegúrate de conceder permisos de cámara a tu navegador.")
@@ -256,15 +323,20 @@ async function saveProduct() {
       alert("El nombre del producto es obligatorio.")
       return
     }
+    const payload = {
+      ...productForm.value,
+      nombre: productForm.value.nombre.trim(),
+      codigoBarras: productForm.value.codigoBarras?.trim() || null
+    }
     if (isEditing.value) {
-      await MongoService.updateProduct(productForm.value.id, productForm.value, currentUser.value)
+      await MongoService.updateProduct(productForm.value.id, payload, currentUser.value)
     } else {
-      await MongoService.createProduct(productForm.value, currentUser.value)
+      await MongoService.createProduct(payload, currentUser.value)
     }
     showProductModal.value = false
     loadProducts()
   } catch (e) {
-    alert("Error al guardar producto: " + e.message)
+    alert("Error al guardar producto: " + (e.message || e))
   }
 }
 
@@ -490,7 +562,7 @@ function formatPrice(value) {
           class="search-input"
         />
       </div>
-      <button @click="openCameraScanner" class="camera-scan-button" title="Escanear producto con la cámara del celular">
+      <button @click="openCameraScannerForPOS" class="camera-scan-button" title="Escanear producto con la cámara del celular">
         📷 Escanear con Cámara
       </button>
     </div>
@@ -579,6 +651,9 @@ function formatPrice(value) {
             <label>Código de Barras</label>
             <div class="input-with-button">
               <input v-model="productForm.codigoBarras" placeholder="Escanea o escribe un código..." />
+              <button type="button" @click="openCameraScannerForProductForm" class="camera-input-btn" title="Escanear código con la cámara">
+                📷 Escanear
+              </button>
               <button type="button" @click="generateBarcode" class="generate-code-btn" title="Generar un código automático para productos sin código físico">
                 ⚡ Generar
               </button>
@@ -618,12 +693,19 @@ function formatPrice(value) {
     <div v-if="showCameraModal" class="modal-overlay" @click.self="closeCameraScanner">
       <div class="modal-content camera-modal">
         <div class="modal-header">
-          <h2>Escanear Código con Cámara</h2>
+          <h2>{{ cameraScanMode === 'PRODUCT_FORM' ? 'Escanear Código para el Producto' : 'Escanear Producto (POS)' }}</h2>
           <button @click="closeCameraScanner" class="close-button">×</button>
         </div>
         <div class="camera-body">
-          <p class="camera-instruction">Apunta la cámara del celular al código de barras del producto:</p>
-          <div id="camera-reader"></div>
+          <p class="camera-instruction">Apunta al código de barras. <strong>👆 Toca el recuadro para enfocar</strong></p>
+          <div class="camera-wrapper" @click="handleCameraTap">
+            <div id="camera-reader"></div>
+            <div 
+              v-if="showFocusRing" 
+              class="focus-ring" 
+              :style="{ left: focusRingPos.x + 'px', top: focusRingPos.y + 'px' }"
+            ></div>
+          </div>
         </div>
         <div class="modal-actions">
           <button type="button" @click="closeCameraScanner" class="cancel-button">Cerrar Cámara</button>
@@ -1079,6 +1161,25 @@ function formatPrice(value) {
   opacity: 0.9;
 }
 
+.camera-input-btn {
+  background: #3b82f6;
+  color: #ffffff;
+  border: 1px solid var(--rheb-black);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.camera-input-btn:hover {
+  background: #2563eb;
+}
+
 .optional-label {
   font-size: 0.8rem;
   color: var(--subtitle-text);
@@ -1094,6 +1195,35 @@ function formatPrice(value) {
   color: var(--subtitle-text);
   font-size: 0.9rem;
   margin-bottom: 12px;
+}
+
+.camera-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 380px;
+  margin: 0 auto;
+  cursor: pointer;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 2px dashed var(--potenza-yellow);
+}
+
+.focus-ring {
+  position: absolute;
+  width: 54px;
+  height: 54px;
+  border: 2px solid #22c55e;
+  box-shadow: 0 0 10px #22c55e;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 10;
+  animation: pulse-focus 0.75s ease-out forwards;
+}
+
+@keyframes pulse-focus {
+  0% { transform: translate(-50%, -50%) scale(1.6); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(0.9); opacity: 0; }
 }
 
 #camera-reader {
