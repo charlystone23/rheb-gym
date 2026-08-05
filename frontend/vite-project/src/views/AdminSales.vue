@@ -1,10 +1,9 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed, nextTick } from "vue"
+import { ref, onMounted, computed } from "vue"
 import { useRouter } from "vue-router"
 import DateField from "../components/DateField.vue"
 import { MongoService } from "../services/mongoService"
 import { displayToNativeDate, formatDateInput, formatDateTimeAR, getMonthRangeDisplay, parseDisplayDate } from "../utils/date"
-import { Html5Qrcode } from "html5-qrcode"
 
 const router = useRouter()
 const products = ref([])
@@ -21,7 +20,6 @@ const showSaleModal = ref(false)
 const showStockModal = ref(false)
 const showPriceModal = ref(false)
 const showHistoryModal = ref(false)
-const showCameraModal = ref(false)
 const isEditing = ref(false)
 
 // Forms data
@@ -37,7 +35,7 @@ const productForm = ref({
 })
 
 const saleForm = ref({
-  product: null,
+  product: "",
   productName: "",
   precioVenta: 0,
   quantity: 1,
@@ -46,7 +44,7 @@ const saleForm = ref({
 })
 
 const saleTotal = computed(() => {
-  return saleForm.value.precioVenta * saleForm.value.quantity
+  return (saleForm.value.precioVenta || 0) * (saleForm.value.quantity || 1)
 })
 
 // Stock Adjustment Form
@@ -87,7 +85,7 @@ const canManageProducts = computed(() => {
   return role === 'ADMIN' || role === 'ADMIN_VENTAS'
 })
 
-// Filtered Products List
+// Filtered Products List for Table
 const filteredProducts = computed(() => {
   return products.value.filter(p => {
     const name = (p.nombre || p.name || '').toLowerCase()
@@ -98,153 +96,18 @@ const filteredProducts = computed(() => {
   })
 })
 
+// Available products with stock > 0 for POS quick sales dropdown
+const availableProductsForSale = computed(() => {
+  return products.value.filter(p => {
+    const stock = p.stockActual !== undefined ? p.stockActual : (p.stock || 0)
+    return stock > 0
+  })
+})
+
 // Barcode Generator for products without physical barcode
 function generateBarcode() {
-  const randomNum = Math.floor(100000000 + Math.random() * 900000000)
-  productForm.value.codigoBarras = `779${randomNum}`
-}
-
-// --- Barcode Scanner (HID Keyboard / Hardware) Handler ---
-let barcodeBuffer = ""
-let barcodeTimer = null
-
-function handleKeyDown(e) {
-  const activeTag = document.activeElement?.tagName
-  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') {
-    return
-  }
-
-  if (e.key === 'Enter') {
-    if (barcodeBuffer.trim().length >= 3) {
-      handleBarcodeScan(barcodeBuffer.trim())
-    }
-    barcodeBuffer = ""
-    return
-  }
-
-  if (e.key.length === 1) {
-    barcodeBuffer += e.key
-    clearTimeout(barcodeTimer)
-    barcodeTimer = setTimeout(() => {
-      barcodeBuffer = ""
-    }, 120)
-  }
-}
-
-async function handleBarcodeScan(code) {
-  const found = products.value.find(p => p.codigoBarras === code)
-  if (found) {
-    openSaleModal(found)
-  } else {
-    const remoteProd = await MongoService.searchProduct(code)
-    if (remoteProd) {
-      openSaleModal(remoteProd)
-    } else {
-      alert(`⚠️ Código de barras "${code}" no encontrado en el sistema.`)
-    }
-  }
-}
-
-// --- Camera Barcode Reader (Mobile Camera) ---
-let html5QrcodeScanner = null
-const cameraScanMode = ref('POS') // 'POS' o 'PRODUCT_FORM'
-const showFocusRing = ref(false)
-const focusRingPos = ref({ x: 0, y: 0 })
-
-function openCameraScannerForPOS() {
-  cameraScanMode.value = 'POS'
-  openCameraScanner()
-}
-
-function openCameraScannerForProductForm() {
-  cameraScanMode.value = 'PRODUCT_FORM'
-  openCameraScanner()
-}
-
-async function handleCameraTap(e) {
-  const rect = e.currentTarget.getBoundingClientRect()
-  focusRingPos.value = {
-    x: e.clientX - rect.left,
-    y: e.clientY - rect.top
-  }
-  showFocusRing.value = true
-  setTimeout(() => { showFocusRing.value = false }, 800)
-
-  triggerFocus()
-}
-
-async function triggerFocus() {
-  if (!html5QrcodeScanner) return
-  try {
-    const track = html5QrcodeScanner.getRunningTrack()
-    if (track && track.getCapabilities) {
-      const caps = track.getCapabilities()
-      if (caps.focusMode) {
-        const mode = caps.focusMode.includes("continuous") ? "continuous" : (caps.focusMode.includes("single-shot") ? "single-shot" : null)
-        if (mode) {
-          await track.applyConstraints({ advanced: [{ focusMode: mode }] })
-        }
-      }
-    }
-  } catch (err) {
-    console.log("Focus trigger note:", err)
-  }
-}
-
-async function openCameraScanner() {
-  showCameraModal.value = true
-  await nextTick()
-  try {
-    html5QrcodeScanner = new Html5Qrcode("camera-reader")
-    const config = {
-      fps: 20,
-      qrbox: (w, h) => {
-        const minEdge = Math.min(w, h)
-        return {
-          width: Math.max(220, Math.floor(minEdge * 0.85)),
-          height: Math.max(120, Math.floor(minEdge * 0.45))
-        }
-      },
-      aspectRatio: 1.333333,
-      experimentalFeatures: {
-        useBarCodeDetectorIfSupported: true
-      }
-    }
-
-    await html5QrcodeScanner.start(
-      { facingMode: "environment" },
-      config,
-      (decodedText) => {
-        const code = decodedText.trim()
-        closeCameraScanner()
-        if (cameraScanMode.value === 'PRODUCT_FORM') {
-          productForm.value.codigoBarras = code
-        } else {
-          handleBarcodeScan(code)
-        }
-      },
-      () => {}
-    )
-
-    setTimeout(() => {
-      triggerFocus()
-    }, 400)
-  } catch (err) {
-    console.error("Camera access error:", err)
-    alert("No se pudo acceder a la cámara. Asegúrate de conceder permisos de cámara a tu navegador.")
-    closeCameraScanner()
-  }
-}
-
-async function closeCameraScanner() {
-  if (html5QrcodeScanner) {
-    try {
-      await html5QrcodeScanner.stop()
-      html5QrcodeScanner.clear()
-    } catch (e) {}
-    html5QrcodeScanner = null
-  }
-  showCameraModal.value = false
+  const randomNum = Math.floor(10000 + Math.random() * 90000)
+  productForm.value.codigoBarras = `${randomNum}`
 }
 
 onMounted(() => {
@@ -253,12 +116,6 @@ onMounted(() => {
     currentUser.value = JSON.parse(userStr)
   }
   loadProducts()
-  window.addEventListener('keydown', handleKeyDown)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleKeyDown)
-  closeCameraScanner()
 })
 
 async function loadProducts() {
@@ -344,9 +201,10 @@ async function deleteProduct(id) {
   if (!confirm("⚠️ ¡ADVERTENCIA! \n\n¿Estás seguro de que deseas eliminar este producto?\n\nEsta acción no se puede deshacer.")) return
   try {
     await MongoService.deleteProduct(id, currentUser.value)
-    loadProducts()
+    alert("✅ Producto eliminado correctamente")
+    await loadProducts()
   } catch (e) {
-    alert("Error al eliminar: " + e.message)
+    alert("Error al eliminar el producto: " + (e.message || e))
   }
 }
 
@@ -489,26 +347,73 @@ function updateStatsDateRange(field, value) {
   statsDateRange.value[field] = formatDateInput(value)
 }
 
-// --- Sales Management ---
-function openSaleModal(product) {
-  const currentStock = product.stockActual !== undefined ? product.stockActual : (product.stock || 0)
-  if (currentStock <= 0) {
-    alert("⚠️ No hay stock disponible para este producto.")
+// --- Sales Management (POS) ---
+function openQuickSaleModal() {
+  if (availableProductsForSale.value.length === 0) {
+    alert("⚠️ No hay productos con stock disponible para vender.")
     return
   }
-  saleForm.value = {
-    product: product._id,
-    productName: product.nombre || product.name,
-    precioVenta: product.precioVenta !== undefined ? product.precioVenta : (product.price || 0),
-    quantity: 1,
-    maxStock: currentStock,
-    metodoPago: "EFECTIVO"
+  openSaleModal(availableProductsForSale.value[0])
+}
+
+function openSaleModal(product = null) {
+  if (product) {
+    const currentStock = product.stockActual !== undefined ? product.stockActual : (product.stock || 0)
+    if (currentStock <= 0) {
+      alert("⚠️ No hay stock disponible para este producto.")
+      return
+    }
+    saleForm.value = {
+      product: product._id,
+      productName: product.nombre || product.name,
+      precioVenta: product.precioVenta !== undefined ? product.precioVenta : (product.price || 0),
+      quantity: 1,
+      maxStock: currentStock,
+      metodoPago: "EFECTIVO"
+    }
+  } else {
+    const firstAvailable = availableProductsForSale.value[0]
+    if (firstAvailable) {
+      const currentStock = firstAvailable.stockActual !== undefined ? firstAvailable.stockActual : (firstAvailable.stock || 0)
+      saleForm.value = {
+        product: firstAvailable._id,
+        productName: firstAvailable.nombre || firstAvailable.name,
+        precioVenta: firstAvailable.precioVenta !== undefined ? firstAvailable.precioVenta : (firstAvailable.price || 0),
+        quantity: 1,
+        maxStock: currentStock,
+        metodoPago: "EFECTIVO"
+      }
+    } else {
+      saleForm.value = {
+        product: "",
+        productName: "",
+        precioVenta: 0,
+        quantity: 1,
+        maxStock: 0,
+        metodoPago: "EFECTIVO"
+      }
+    }
   }
   showSaleModal.value = true
 }
 
+function onProductSelectChange() {
+  const prod = products.value.find(p => p._id === saleForm.value.product)
+  if (prod) {
+    const currentStock = prod.stockActual !== undefined ? prod.stockActual : (prod.stock || 0)
+    saleForm.value.productName = prod.nombre || prod.name
+    saleForm.value.precioVenta = prod.precioVenta !== undefined ? prod.precioVenta : (prod.price || 0)
+    saleForm.value.maxStock = currentStock
+    saleForm.value.quantity = 1
+  }
+}
+
 async function registerSale() {
   try {
+    if (!saleForm.value.product) {
+      alert("Por favor selecciona un producto para vender.")
+      return
+    }
     const saleData = {
       items: [{
         productoId: saleForm.value.product,
@@ -536,23 +441,28 @@ function formatPrice(value) {
 
 <template>
   <div class="admin-sales-container">
+    <!-- Header -->
     <div class="admin-sales-header">
       <div class="header-left">
         <button v-if="isAdminVentas" @click="handleLogout" class="logout-button" title="Cerrar Sesión">🚪 Salir</button>
         <button v-else @click="goBack" class="back-button">←</button>
-        <img src="/logo.svg" alt="Potenza Gym Logo" class="logo-small" />
         <div>
           <h1>Ventas e Inventario (POS)</h1>
           <p class="subtitle">Control de stock, trazabilidad y cobro de productos</p>
         </div>
       </div>
       <div class="header-actions">
+        <!-- Main Quick Sell Button for ALL roles (ADMIN, ADMIN_VENTAS, ENTRENADOR) -->
+        <button @click="openQuickSaleModal" class="quick-sell-main-button" title="Registrar una nueva venta de producto">
+          🛒 Vender Producto
+        </button>
+
         <button v-if="canManageProducts" @click="openCreateModal" class="create-button">+ Nuevo Producto</button>
         <button v-if="canManageProducts" @click="openGeneralStatsModal" class="stats-button">📊 Estadísticas</button>
       </div>
     </div>
 
-    <!-- Toolbar: Search & Camera Scanner -->
+    <!-- Toolbar: Search Box -->
     <div class="toolbar-card">
       <div class="search-box">
         <span class="search-icon">🔍</span>
@@ -562,9 +472,6 @@ function formatPrice(value) {
           class="search-input"
         />
       </div>
-      <button @click="openCameraScannerForPOS" class="camera-scan-button" title="Escanear producto con la cámara del celular">
-        📷 Escanear con Cámara
-      </button>
     </div>
 
     <div class="content-area">
@@ -609,12 +516,13 @@ function formatPrice(value) {
                 </span>
               </td>
               <td class="actions-cell">
+                <!-- Sell button available for ALL users (Admin, AdminVentas, Entrenador) -->
                 <button 
                   @click="openSaleModal(product)" 
                   class="sell-button-small" 
                   :disabled="(product.stockActual !== undefined ? product.stockActual : product.stock) === 0"
                 >
-                  Vender
+                  🛒 Vender
                 </button>
                 <button v-if="canManageProducts" @click="openStockModal(product)" class="stock-button-small" title="Ajustar Stock (Trazabilidad)">📦 Stock</button>
                 <button v-if="canManageProducts" @click="openPriceModal(product)" class="price-button-small" title="Actualizar Precio">$ Precio</button>
@@ -650,10 +558,7 @@ function formatPrice(value) {
           <div class="form-group">
             <label>Código de Barras</label>
             <div class="input-with-button">
-              <input v-model="productForm.codigoBarras" placeholder="Escanea o escribe un código..." />
-              <button type="button" @click="openCameraScannerForProductForm" class="camera-input-btn" title="Escanear código con la cámara">
-                📷 Escanear
-              </button>
+              <input v-model="productForm.codigoBarras" placeholder="Escribe un código o genera uno..." />
               <button type="button" @click="generateBarcode" class="generate-code-btn" title="Generar un código automático para productos sin código físico">
                 ⚡ Generar
               </button>
@@ -689,30 +594,6 @@ function formatPrice(value) {
       </div>
     </div>
 
-    <!-- Camera Scanner Modal -->
-    <div v-if="showCameraModal" class="modal-overlay" @click.self="closeCameraScanner">
-      <div class="modal-content camera-modal">
-        <div class="modal-header">
-          <h2>{{ cameraScanMode === 'PRODUCT_FORM' ? 'Escanear Código para el Producto' : 'Escanear Producto (POS)' }}</h2>
-          <button @click="closeCameraScanner" class="close-button">×</button>
-        </div>
-        <div class="camera-body">
-          <p class="camera-instruction">Apunta al código de barras. <strong>👆 Toca el recuadro para enfocar</strong></p>
-          <div class="camera-wrapper" @click="handleCameraTap">
-            <div id="camera-reader"></div>
-            <div 
-              v-if="showFocusRing" 
-              class="focus-ring" 
-              :style="{ left: focusRingPos.x + 'px', top: focusRingPos.y + 'px' }"
-            ></div>
-          </div>
-        </div>
-        <div class="modal-actions">
-          <button type="button" @click="closeCameraScanner" class="cancel-button">Cerrar Cámara</button>
-        </div>
-      </div>
-    </div>
-
     <!-- Sale POS Modal -->
     <div v-if="showSaleModal" class="modal-overlay" @click.self="showSaleModal = false">
       <div class="modal-content">
@@ -721,7 +602,27 @@ function formatPrice(value) {
           <button @click="showSaleModal = false" class="close-button">×</button>
         </div>
         <form @submit.prevent="registerSale" class="modal-form">
-          <div class="product-summary">
+          
+          <div class="form-group">
+            <label>Producto a Vender *</label>
+            <select 
+              v-model="saleForm.product" 
+              @change="onProductSelectChange"
+              required 
+              class="form-select"
+            >
+              <option value="" disabled>Selecciona un producto...</option>
+              <option 
+                v-for="p in availableProductsForSale" 
+                :key="p._id" 
+                :value="p._id"
+              >
+                {{ p.nombre || p.name }} — {{ formatPrice(p.precioVenta !== undefined ? p.precioVenta : p.price) }} (Stock: {{ p.stockActual !== undefined ? p.stockActual : p.stock }} un.)
+              </option>
+            </select>
+          </div>
+
+          <div v-if="saleForm.product" class="product-summary">
             <h3>{{ saleForm.productName }}</h3>
             <p>Precio Unitario: <strong>{{ formatPrice(saleForm.precioVenta) }}</strong></p>
             <p>Stock Disponible: <strong>{{ saleForm.maxStock }} un.</strong></p>
@@ -756,7 +657,7 @@ function formatPrice(value) {
 
           <div class="modal-actions">
             <button type="button" @click="showSaleModal = false" class="cancel-button">Cancelar</button>
-            <button type="submit" class="submit-button confirm-sale">Confirmar Venta</button>
+            <button type="submit" class="submit-button confirm-sale" :disabled="!saleForm.product">Confirmar Venta</button>
           </div>
         </form>
       </div>
@@ -882,7 +783,7 @@ function formatPrice(value) {
       </div>
     </div>
 
-    <!-- General Sales Stats Modal (Financially Isolated) -->
+    <!-- General Sales Stats Modal -->
     <div v-if="showGeneralStatsModal" class="modal-overlay" @click.self="showGeneralStatsModal = false">
       <div class="modal-content history-modal">
         <div class="modal-header">
@@ -1046,11 +947,6 @@ function formatPrice(value) {
   min-height: 44px;
 }
 
-.logo-small {
-  width: 50px;
-  height: 50px;
-}
-
 .admin-sales-header h1 {
   color: var(--header-text);
   font-size: 1.75rem;
@@ -1069,6 +965,25 @@ function formatPrice(value) {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.quick-sell-main-button {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
+  border: 2px solid var(--rheb-black);
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 800;
+  cursor: pointer;
+  min-height: 44px;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+  transition: transform 0.15s ease;
+}
+
+.quick-sell-main-button:active {
+  transform: scale(0.97);
 }
 
 .create-button {
@@ -1120,26 +1035,6 @@ function formatPrice(value) {
   outline: none;
 }
 
-.camera-scan-button {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  color: #ffffff;
-  border: 1px solid var(--rheb-black);
-  border-radius: 10px;
-  padding: 10px 16px;
-  font-weight: 700;
-  font-size: 0.9rem;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  min-height: 44px;
-}
-
-.camera-scan-button:active {
-  transform: scale(0.97);
-}
-
 .input-with-button {
   display: flex;
   gap: 8px;
@@ -1161,77 +1056,10 @@ function formatPrice(value) {
   opacity: 0.9;
 }
 
-.camera-input-btn {
-  background: #3b82f6;
-  color: #ffffff;
-  border: 1px solid var(--rheb-black);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-weight: 700;
-  font-size: 0.85rem;
-  cursor: pointer;
-  white-space: nowrap;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.camera-input-btn:hover {
-  background: #2563eb;
-}
-
 .optional-label {
   font-size: 0.8rem;
   color: var(--subtitle-text);
   font-weight: 400;
-}
-
-.camera-body {
-  text-align: center;
-  margin-bottom: 16px;
-}
-
-.camera-instruction {
-  color: var(--subtitle-text);
-  font-size: 0.9rem;
-  margin-bottom: 12px;
-}
-
-.camera-wrapper {
-  position: relative;
-  width: 100%;
-  max-width: 380px;
-  margin: 0 auto;
-  cursor: pointer;
-  border-radius: 14px;
-  overflow: hidden;
-  border: 2px dashed var(--potenza-yellow);
-}
-
-.focus-ring {
-  position: absolute;
-  width: 54px;
-  height: 54px;
-  border: 2px solid #22c55e;
-  box-shadow: 0 0 10px #22c55e;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-  z-index: 10;
-  animation: pulse-focus 0.75s ease-out forwards;
-}
-
-@keyframes pulse-focus {
-  0% { transform: translate(-50%, -50%) scale(1.6); opacity: 1; }
-  100% { transform: translate(-50%, -50%) scale(0.9); opacity: 0; }
-}
-
-#camera-reader {
-  width: 100%;
-  max-width: 380px;
-  margin: 0 auto;
-  border-radius: 12px;
-  overflow: hidden;
 }
 
 .products-list-container {
@@ -1308,8 +1136,9 @@ function formatPrice(value) {
 .actions-cell {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .sell-button-small {
@@ -1317,11 +1146,14 @@ function formatPrice(value) {
   color: var(--rheb-primary-green);
   border: 2px solid var(--rheb-black);
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 0.85rem;
-  font-weight: 700;
+  font-weight: 800;
   cursor: pointer;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .sell-button-small:disabled {
@@ -1337,9 +1169,10 @@ function formatPrice(value) {
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
 }
 
 .price-button-small {
@@ -1351,12 +1184,16 @@ function formatPrice(value) {
   font-size: 0.85rem;
   font-weight: 700;
   cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
 }
 
 .icon-actions {
-  display: flex;
-  gap: 6px;
+  display: inline-flex;
+  gap: 4px;
   align-items: center;
+  white-space: nowrap;
 }
 
 .icon-button {
@@ -1516,6 +1353,11 @@ function formatPrice(value) {
   color: var(--potenza-dark-grey);
   font-weight: 700;
   min-height: 46px;
+}
+
+.submit-button.confirm-sale {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
 }
 
 .product-summary {
@@ -1720,6 +1562,14 @@ function formatPrice(value) {
   .toolbar-card {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .header-actions {
+    width: 100%;
+  }
+
+  .quick-sell-main-button, .create-button, .stats-button {
+    flex: 1;
   }
 
   .stats-filter-row {

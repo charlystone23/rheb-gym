@@ -1430,8 +1430,8 @@ app.get('/api/products/search/:query', async (req, res) => {
     }
 });
 
-// CREATE Product (Allowed ONLY for ADMIN_VENTAS or ADMIN)
-app.post('/api/products', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin']), async (req, res) => {
+// CREATE Product (Allowed for ADMIN_VENTAS, ADMIN, ENTRENADOR)
+app.post('/api/products', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin', 'ENTRENADOR', 'entrenador']), async (req, res) => {
     try {
         const {
             nombre, name,
@@ -1469,8 +1469,8 @@ app.post('/api/products', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin']), async
     }
 });
 
-// UPDATE Product (Allowed ONLY for ADMIN_VENTAS or ADMIN)
-app.put('/api/products/:id', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin']), async (req, res) => {
+// UPDATE Product (Allowed for ADMIN_VENTAS, ADMIN, ENTRENADOR)
+app.put('/api/products/:id', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin', 'ENTRENADOR', 'entrenador']), async (req, res) => {
     try {
         const { id } = req.params;
         const updateData = { ...req.body };
@@ -1605,15 +1605,19 @@ app.get('/api/products/:id/stock-logs', async (req, res) => {
 });
 
 // DELETE Product
-app.delete('/api/products/:id', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin']), async (req, res) => {
+app.delete('/api/products/:id', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin', 'ENTRENADOR', 'entrenador']), async (req, res) => {
     try {
         const { id } = req.params;
+        if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: 'Identificador de producto no válido' });
+        }
         const deleted = await Product.findByIdAndDelete(id);
-        if (!deleted) return res.status(404).json({ error: 'Producto no encontrado' });
+        if (!deleted) return res.status(404).json({ error: 'Producto no encontrado o ya fue eliminado' });
 
         res.json({ message: 'Producto eliminado correctamente' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("Error al eliminar producto:", err);
+        res.status(500).json({ error: err.message || 'Error al eliminar el producto' });
     }
 });
 
