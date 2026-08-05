@@ -101,21 +101,29 @@ router.beforeEach((to, from, next) => {
     return
   }
 
+  // If user is ADMIN_VENTAS, restrict exclusively to /sales
+  if (user?.role === "ADMIN_VENTAS") {
+    if (to.path !== "/sales") {
+      next("/sales")
+      return
+    }
+  }
+
   // If route requires admin and user is not admin, redirect to dashboard
-  if (to.meta.requiresAdmin && user?.role !== "admin") {
-    next("/dashboard")
+  if (to.meta.requiresAdmin && user?.role !== "admin" && user?.role !== "ADMIN") {
+    next(user?.role === "ADMIN_VENTAS" ? "/sales" : "/dashboard")
     return
   }
 
   // If user is admin trying to access dashboard or alumnos (trainer view), redirect to admin panel
-  if ((to.path === "/dashboard" || to.path === "/alumnos") && user?.role === "admin") {
+  if ((to.path === "/dashboard" || to.path === "/alumnos") && (user?.role === "admin" || user?.role === "ADMIN")) {
     next("/admin")
     return
   }
 
   // If user is common user trying to access admin routes (except schedules), redirect to dashboard
-  if (to.path.startsWith("/admin") && to.path !== "/admin/schedules" && user?.role !== "admin") {
-    next("/dashboard")
+  if (to.path.startsWith("/admin") && to.path !== "/admin/schedules" && user?.role !== "admin" && user?.role !== "ADMIN") {
+    next(user?.role === "ADMIN_VENTAS" ? "/sales" : "/dashboard")
     return
   }
 

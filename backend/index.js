@@ -1452,8 +1452,8 @@ app.post('/api/products', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin']), async
             precioVenta: precioVenta !== undefined ? precioVenta : (price || 0),
             precioCosto: precioCosto !== undefined ? precioCosto : 0,
             stockActual: stockActual !== undefined ? stockActual : (stock || 0),
-            stockMinimo: stockMinimo !== undefined ? stockMinimo : 5,
-            categoria: categoria || category || 'General',
+            stockMinimo: stockMinimo !== undefined ? stockMinimo : 0,
+            categoria: categoria || category || '',
             activo: activo !== undefined ? activo : true
         });
 

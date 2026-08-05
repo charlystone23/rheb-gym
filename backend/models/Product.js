@@ -5,10 +5,10 @@ const ProductSchema = new mongoose.Schema({
     codigoBarras: { type: String, unique: true, sparse: true, index: true, default: null },
     descripcion: { type: String, default: '' },
     precioVenta: { type: Number, required: true },
-    precioCosto: { type: Number, required: true, default: 0 },
+    precioCosto: { type: Number, default: 0 },
     stockActual: { type: Number, required: true, default: 0 },
-    stockMinimo: { type: Number, required: true, default: 5 },
-    categoria: { type: String, default: 'General' },
+    stockMinimo: { type: Number, default: 0 },
+    categoria: { type: String, default: '' },
     activo: { type: Boolean, default: true }
 }, {
     timestamps: true,
