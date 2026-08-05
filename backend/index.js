@@ -663,6 +663,31 @@ app.delete('/api/alumnos/:id', async (req, res) => {
     }
 });
 
+// PERMANENT DELETE Alumno
+app.delete('/api/alumnos/:id/permanent', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const actorRole = req.query.actorRole || null;
+
+        if (actorRole !== 'admin') {
+            return res.status(403).json({ error: 'Solo un administrador puede eliminar alumnos definitivamente.' });
+        }
+
+        const alumno = await Alumno.findById(id);
+        if (!alumno) return res.status(404).json({ error: 'Alumno no encontrado' });
+        if (alumno.estado !== 'inactivo') {
+            return res.status(400).json({ error: 'Solo se pueden eliminar definitivamente alumnos inactivos.' });
+        }
+
+        await removeAlumnoAssignments(alumno._id);
+        await Alumno.findByIdAndDelete(id);
+
+        res.json({ message: 'Alumno eliminado definitivamente' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.post('/api/alumnos/:id/reactivar', async (req, res) => {
     try {
         const { id } = req.params;
@@ -875,6 +900,34 @@ function findSameDayPago(alumno, fecha, excludedPagoId = null) {
         }
 
         return getDateKey(existingPago.fecha) === targetKey;
+    }) || null;
+}
+
+function findDuplicatePeriodPago(alumno, newPago, excludedPagoId = null) {
+    if (!alumno?.historialPagos?.length) return null;
+
+    const { mesQueAbona, anioQueAbona } = newPago;
+    if (!mesQueAbona || !anioQueAbona) return null;
+
+    const isNewPagoPartial = newPago.esParcial || newPago.completaParcial;
+    const isNewPagoPromise = String(newPago.tipo || '').trim().toLowerCase() === 'promesa de pago';
+
+    if (isNewPagoPartial || isNewPagoPromise) {
+        return null;
+    }
+
+    return alumno.historialPagos.find((existingPago) => {
+        if (excludedPagoId && existingPago._id?.toString() === excludedPagoId.toString()) {
+            return false;
+        }
+
+        const samePeriod = existingPago.mesQueAbona === mesQueAbona && existingPago.anioQueAbona === anioQueAbona;
+        if (!samePeriod) return false;
+
+        const isExistingPagoPartial = existingPago.esParcial || existingPago.completaParcial;
+        const isExistingPagoPromise = String(existingPago.tipo || '').trim().toLowerCase() === 'promesa de pago';
+
+        return !isExistingPagoPartial && !isExistingPagoPromise;
     }) || null;
 }
 
@@ -1122,6 +1175,15 @@ app.post('/api/alumnos/:id/pagos', async (req, res) => {
         }
 
         const pago = normalizePagoPeriodo(pagoPayload);
+
+        const duplicatePeriodPago = findDuplicatePeriodPago(alumnoExistente, pago);
+        if (duplicatePeriodPago) {
+            return res.status(409).json({
+                error: `El alumno ya tiene un pago registrado para el período ${pago.mesQueAbona}/${pago.anioQueAbona}.`,
+                code: 'DUPLICATE_PAYMENT_PERIOD'
+            });
+        }
+
         const sameDayPago = findSameDayPago(alumnoExistente, pago.fecha);
         if (sameDayPago && !allowDuplicateSameDay) {
             return res.status(409).json({
@@ -1160,6 +1222,15 @@ app.put('/api/alumnos/:id/pagos/:pagoId', async (req, res) => {
         if (!pago) return res.status(404).json({ error: 'Pago no encontrado' });
 
         const normalizedPayload = normalizePagoPeriodo(req.body, pago);
+
+        const duplicatePeriodPago = findDuplicatePeriodPago(alumno, normalizedPayload, pagoId);
+        if (duplicatePeriodPago) {
+            return res.status(409).json({
+                error: `El alumno ya tiene otro pago registrado para el período ${normalizedPayload.mesQueAbona}/${normalizedPayload.anioQueAbona}.`,
+                code: 'DUPLICATE_PAYMENT_PERIOD'
+            });
+        }
+
         const fechaObjetivo = normalizedPayload.fecha ?? pago.fecha;
         const sameDayPago = findSameDayPago(alumno, fechaObjetivo, pagoId);
         if (sameDayPago && !req.body.allowDuplicateSameDay) {

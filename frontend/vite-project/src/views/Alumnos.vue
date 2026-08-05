@@ -53,6 +53,16 @@ const currentUser = ref(null)
 const searchQuery = ref("")
 const sortOrder = ref("az")
 const currentYear = new Date().getFullYear()
+
+const paymentYear = computed(() => {
+  const date = parseDisplayDate(nuevoPago.value.fechaPago)
+  return date && !isNaN(date.getTime()) ? date.getFullYear() : new Date().getFullYear()
+})
+
+const registrationPaymentYear = computed(() => {
+  const date = parseDisplayDate(nuevoAlumno.value.fechaPago)
+  return date && !isNaN(date.getTime()) ? date.getFullYear() : new Date().getFullYear()
+})
 const mesesQueAbona = [
   { value: 1, label: "Enero" },
   { value: 2, label: "Febrero" },
@@ -380,7 +390,7 @@ function openModal() {
     nombre: "",
     apellido: "",
     celular: "",
-    fechaPago: "", // Not used for editing but needed for object structure if any
+    fechaPago: formatDateAR(new Date()),
     mesQueAbona: new Date().getMonth() + 1,
     tipoPago: "efectivo",
     membresiaId: membresias.value.find(m => m.nombre.includes('3 días'))?._id || membresias.value[0]?._id || "",
@@ -484,15 +494,7 @@ async function agregarAlumno() {
     return
   }
   
-  // Validar que la fecha no sea futura
-  const hoy = new Date()
-  hoy.setHours(0, 0, 0, 0)
   fechaPagoDate.setHours(0, 0, 0, 0)
-  
-  if (fechaPagoDate > hoy) {
-    error.value = "La fecha de pago no puede ser futura"
-    return
-  }
   
   // Crear nuevo alumno object for Mongo service
   // Note: ID generation is handled by MongoService mostly, but we might want
@@ -515,7 +517,7 @@ async function agregarAlumno() {
   const historial = [{
     fecha: fechaPagoDate,
     mesQueAbona: Number(nuevoAlumno.value.mesQueAbona || (fechaPagoDate.getMonth() + 1)),
-    anioQueAbona: currentYear,
+    anioQueAbona: registrationPaymentYear.value,
     tipo: isPromisePayment(nuevoAlumno.value.tipoPago) ? "promesa de pago" : nuevoAlumno.value.tipoPago,
     detalle: isPromisePayment(nuevoAlumno.value.tipoPago)
       ? "Promesa de Pago"
@@ -641,15 +643,7 @@ async function registrarPago() {
     return
   }
   
-  // Validar que la fecha no sea futura
-  const hoy = new Date()
-  hoy.setHours(0, 0, 0, 0)
   fechaPagoDate.setHours(0, 0, 0, 0)
-  
-  if (fechaPagoDate > hoy) {
-    error.value = "La fecha de pago no puede ser futura"
-    return
-  }
   
   // Buscar el alumno en la lista
   const alumnoIndex = alumnos.value.findIndex(a => a.id === alumnoSeleccionado.value.id)
@@ -689,6 +683,25 @@ async function registrarPago() {
     montoCalculado = montoParcial
   }
 
+  const isNewPagoPartial = nuevoPago.value.pagoParcial || hadPendingPartial
+  const isNewPagoPromise = isPromisePayment(tipoFinal)
+
+  if (!isNewPagoPartial && !isNewPagoPromise) {
+    const hasDuplicatePeriod = alumnoSeleccionado.value.historialPagos?.some(p => {
+      const isExistingPagoPartial = p.esParcial || p.completaParcial
+      const isExistingPagoPromise = isPromisePayment(p.tipo || p.detalle)
+      return p.mesQueAbona === Number(nuevoPago.value.mesQueAbona) &&
+             p.anioQueAbona === paymentYear.value &&
+             !isExistingPagoPartial &&
+             !isExistingPagoPromise
+    })
+
+    if (hasDuplicatePeriod) {
+      error.value = `El alumno ya tiene un pago completo registrado para el período ${nuevoPago.value.mesQueAbona}/${paymentYear.value}.`
+      return
+    }
+  }
+
   const completaConMontoExacto = nuevoPago.value.pagoParcial && montoCalculado === montoBase
   const sameDayPayment = findSameDayPayment(alumnoSeleccionado.value, fechaPagoDate)
   let allowDuplicateSameDay = false
@@ -705,7 +718,7 @@ async function registrarPago() {
   const nuevoPagoObj = {
     fecha: fechaPagoDate,
     mesQueAbona: Number(nuevoPago.value.mesQueAbona || (fechaPagoDate.getMonth() + 1)),
-    anioQueAbona: currentYear,
+    anioQueAbona: paymentYear.value,
     tipo: isPromisePayment(tipoFinal) ? "promesa de pago" : tipoFinal,
     detalle: completaConMontoExacto
       ? "Completa pago parcial"
@@ -1057,13 +1070,13 @@ async function confirmarDelegacion() {
     <div v-if="showDeleteModal" class="modal-overlay" @click.self="closeDeleteModal">
       <div class="modal-content delete-confirmation-modal">
         <div class="delete-icon-large">⚠️</div>
-        <h3>¿Eliminar Alumno?</h3>
-        <p>Estás a punto de eliminar a <strong>{{ alumnoAEliminar?.nombre }} {{ alumnoAEliminar?.apellido }}</strong>.</p>
-        <p class="delete-warning">Esta acción es permanente y no se puede deshacer.</p>
+        <h3>¿Desactivar Alumno?</h3>
+        <p>Estás a punto de desactivar a <strong>{{ alumnoAEliminar?.nombre }} {{ alumnoAEliminar?.apellido }}</strong>.</p>
+        <p class="delete-warning">El alumno quedará inactivo y se quitará de sus turnos. Un administrador podrá reactivarlo o eliminarlo definitivamente.</p>
         
         <div class="modal-actions-stacked">
           <button @click="confirmarEliminacion" class="confirm-delete-btn" :disabled="isLoading">
-            {{ isLoading ? 'Eliminando...' : 'Sí, Eliminar' }}
+            {{ isLoading ? 'Desactivando...' : 'Sí, Desactivar' }}
           </button>
           <button @click="closeDeleteModal" class="cancel-delete-btn" :disabled="isLoading">
             Cancelar
@@ -1120,7 +1133,6 @@ async function confirmarDelegacion() {
               <DateField
                 input-id="fechaPago"
                 :model-value="nuevoAlumno.fechaPago"
-                :max="new Date().toISOString().slice(0,10)"
                 @update:model-value="value => nuevoAlumno.fechaPago = value"
               />
             </div>
@@ -1134,7 +1146,7 @@ async function confirmarDelegacion() {
               class="select-input"
             >
               <option v-for="mes in mesesQueAbona" :key="mes.value" :value="mes.value">
-                {{ mes.label }} {{ currentYear }}
+                {{ mes.label }} {{ registrationPaymentYear }}
               </option>
             </select>
           </div>
@@ -1228,7 +1240,6 @@ async function confirmarDelegacion() {
             <DateField
               input-id="fechaPagoPago"
               :model-value="nuevoPago.fechaPago"
-              :max="new Date().toISOString().slice(0,10)"
               @update:model-value="value => nuevoPago.fechaPago = value"
             />
           </div>
@@ -1242,7 +1253,7 @@ async function confirmarDelegacion() {
               class="select-input"
             >
               <option v-for="mes in mesesQueAbona" :key="mes.value" :value="mes.value">
-                {{ mes.label }} {{ currentYear }}
+                {{ mes.label }} {{ paymentYear }}
               </option>
             </select>
           </div>

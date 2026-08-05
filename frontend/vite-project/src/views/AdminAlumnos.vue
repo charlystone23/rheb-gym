@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from "vue"
+import { ref, onMounted, computed } from "vue"
 import { useRouter } from "vue-router"
 import DateField from "../components/DateField.vue"
 import { MongoService } from "../services/mongoService"
@@ -16,6 +16,8 @@ const membresias = ref([])
 const showEditPaymentModal = ref(false)
 const isSavingPayment = ref(false)
 const isDeletingPayment = ref(false)
+const deactivatingAlumnoId = ref("")
+const deletingInactiveAlumnoId = ref("")
 const alumnoPagoEditando = ref(null)
 const entrenadorPagoEditando = ref(null)
 const pagoOriginalEditando = ref(null)
@@ -30,6 +32,32 @@ const pagoActual = ref({
   medio: "transferencia"
 })
 const currentYear = new Date().getFullYear()
+
+const showPaymentModal = ref(false)
+const alumnoSeleccionado = ref(null)
+const entrenadorSeleccionado = ref(null)
+const nuevoPago = ref({
+  fechaPago: "",
+  mesQueAbona: new Date().getMonth() + 1,
+  tipoPago: "efectivo",
+  membresiaId: "",
+  montoDescuento: "",
+  medioDescuento: "transferencia",
+  pagoSimilar: false,
+  montoSimilar: "",
+  pagoParcial: false,
+  montoParcial: ""
+})
+
+const paymentYear = computed(() => {
+  const date = parseDisplayDate(nuevoPago.value.fechaPago)
+  return date && !isNaN(date.getTime()) ? date.getFullYear() : new Date().getFullYear()
+})
+
+const editPaymentYear = computed(() => {
+  const date = parseDisplayDate(pagoActual.value.fechaPago)
+  return date && !isNaN(date.getTime()) ? date.getFullYear() : new Date().getFullYear()
+})
 const mesesQueAbona = [
   { value: 1, label: "Enero" },
   { value: 2, label: "Febrero" },
@@ -266,6 +294,41 @@ function getInactiveAlumnos(entrenador) {
   return (entrenador.alumnos || []).filter((alumno) => alumno.estado === "inactivo")
 }
 
+async function desactivarAlumno(entrenador, alumno) {
+  const alumnoId = getAlumnoId(alumno)
+  const confirmed = confirm(`¿Querés desactivar a ${alumno.nombre} ${alumno.apellido}? Se quitará de sus turnos y quedará en alumnos inactivos.`)
+  if (!confirmed) return
+
+  try {
+    deactivatingAlumnoId.value = alumnoId
+    error.value = ""
+
+    const result = await MongoService.deleteAlumno(alumnoId, {
+      role: currentUser.value?.role,
+      userId: currentUser.value?._id
+    })
+    const alumnoActualizado = result?.alumno || result
+
+    entrenadores.value = entrenadores.value.map((item) => {
+      if (item._id !== entrenador._id) return item
+
+      return {
+        ...item,
+        alumnos: (item.alumnos || []).map((existingAlumno) =>
+          getAlumnoId(existingAlumno) === alumnoId
+            ? { ...existingAlumno, ...alumnoActualizado, id: alumnoActualizado?._id || alumnoId }
+            : existingAlumno
+        )
+      }
+    })
+  } catch (e) {
+    console.error("Error deactivating alumno:", e)
+    error.value = e.message || "No se pudo desactivar el alumno."
+  } finally {
+    deactivatingAlumnoId.value = ""
+  }
+}
+
 async function reactivarAlumno(entrenador, alumno) {
   try {
     error.value = ""
@@ -286,6 +349,38 @@ async function reactivarAlumno(entrenador, alumno) {
   } catch (e) {
     console.error("Error reactivating alumno:", e)
     error.value = e.message || "No se pudo reactivar el alumno."
+  }
+}
+
+async function eliminarAlumnoInactivo(entrenador, alumno) {
+  const alumnoId = getAlumnoId(alumno)
+  const confirmed = confirm(`¿Querés eliminar definitivamente a ${alumno.nombre} ${alumno.apellido}? Esta acción no se puede deshacer.`)
+  if (!confirmed) return
+
+  try {
+    deletingInactiveAlumnoId.value = alumnoId
+    error.value = ""
+
+    await MongoService.deleteAlumnoPermanentemente(alumnoId, {
+      role: currentUser.value?.role,
+      userId: currentUser.value?._id
+    })
+
+    entrenadores.value = entrenadores.value.map((item) => {
+      if (item._id !== entrenador._id) return item
+
+      return {
+        ...item,
+        alumnos: (item.alumnos || []).filter((existingAlumno) =>
+          getAlumnoId(existingAlumno) !== alumnoId
+        )
+      }
+    })
+  } catch (e) {
+    console.error("Error deleting inactive alumno:", e)
+    error.value = e.message || "No se pudo eliminar el alumno."
+  } finally {
+    deletingInactiveAlumnoId.value = ""
   }
 }
 
@@ -386,6 +481,27 @@ async function guardarPagoEditado() {
   }
 
   const tipoNormalizado = normalizePaymentType(pagoActual.value.tipoPago)
+
+  const isNewPagoPartial = pagoBase?.esParcial || pagoBase?.completaParcial
+  const isNewPagoPromise = isPromisePayment(tipoNormalizado)
+
+  if (!isNewPagoPartial && !isNewPagoPromise) {
+    const hasDuplicatePeriod = alumnoPagoEditando.value.historialPagos?.some(p => {
+      if (p._id === pagoActual.value.pagoId) return false
+      const isExistingPagoPartial = p.esParcial || p.completaParcial
+      const isExistingPagoPromise = isPromisePayment(p.tipo || p.detalle)
+      return p.mesQueAbona === Number(pagoActual.value.mesQueAbona) &&
+             p.anioQueAbona === editPaymentYear.value &&
+             !isExistingPagoPartial &&
+             !isExistingPagoPromise
+    })
+
+    if (hasDuplicatePeriod) {
+      error.value = `El alumno ya tiene otro pago completo registrado para el período ${pagoActual.value.mesQueAbona}/${editPaymentYear.value}.`
+      return
+    }
+  }
+
   const sameDayPayment = findSameDayPayment(alumnoPagoEditando.value, fechaPagoDate, pagoActual.value.pagoId)
   let allowDuplicateSameDay = false
 
@@ -401,7 +517,7 @@ async function guardarPagoEditado() {
   const payload = {
     fecha: fechaPagoDate,
     mesQueAbona: Number(pagoActual.value.mesQueAbona || (fechaPagoDate.getMonth() + 1)),
-    anioQueAbona: currentYear,
+    anioQueAbona: editPaymentYear.value,
     tipo: tipoNormalizado,
     detalle: isPromisePayment(tipoNormalizado)
       ? "Promesa de Pago"
@@ -498,6 +614,285 @@ async function eliminarPagoEditando() {
     error.value = e.message || "No se pudo eliminar el pago."
   } finally {
     isDeletingPayment.value = false
+  }
+}
+
+function getPendingPartialAmount(alumno) {
+  const ultimoPago = getUltimoPago(alumno)
+  if (!ultimoPago?.esParcial) return 0
+  return Number(ultimoPago.saldoPendiente || 0)
+}
+
+function shouldShowCustomAmountForPayment() {
+  return nuevoPago.value.pagoSimilar || isDiscountPayment(nuevoPago.value.tipoPago) || hasPendingPartialPayment(alumnoSeleccionado.value)
+}
+
+function applySimilarPaymentFromLast(alumno) {
+  const ultimoPago = getUltimoPago(alumno)
+  if (!ultimoPago) return
+
+  const tipoNormalizado = normalizePaymentType(ultimoPago.tipo || ultimoPago.detalle)
+  const membresiaId = ultimoPago.membresia?.id || ultimoPago.membresia?._id || nuevoPago.value.membresiaId
+
+  nuevoPago.value.tipoPago = tipoNormalizado || "efectivo"
+  nuevoPago.value.membresiaId = membresiaId || nuevoPago.value.membresiaId
+  nuevoPago.value.montoSimilar = String(getDisplayedPaymentAmount(ultimoPago))
+  nuevoPago.value.medioDescuento = ultimoPago.medio || "transferencia"
+}
+
+function handlePagoSimilarChange() {
+  if (!nuevoPago.value.pagoSimilar) {
+    nuevoPago.value.montoSimilar = ""
+    if (isDiscountPayment(nuevoPago.value.tipoPago)) {
+      nuevoPago.value.medioDescuento = nuevoPago.value.medioDescuento || "transferencia"
+    }
+    return
+  }
+
+  if (alumnoSeleccionado.value) {
+    applySimilarPaymentFromLast(alumnoSeleccionado.value)
+  }
+}
+
+function getBaseAmountForCurrentPayment(selectedM, alumno) {
+  if (hasPendingPartialPayment(alumno)) {
+    return getPendingPartialAmount(alumno)
+  }
+
+  if (nuevoPago.value.pagoSimilar && nuevoPago.value.montoSimilar !== "" && !isNaN(Number(nuevoPago.value.montoSimilar))) {
+    return Number(nuevoPago.value.montoSimilar)
+  }
+
+  if (isDiscountPayment(nuevoPago.value.tipoPago) && nuevoPago.value.montoDescuento !== "" && !isNaN(Number(nuevoPago.value.montoDescuento))) {
+    return Number(nuevoPago.value.montoDescuento)
+  }
+
+  return selectedM ? selectedM.precio : 0
+}
+
+function openPaymentModal(entrenador, alumno) {
+  entrenadorSeleccionado.value = entrenador
+  alumnoSeleccionado.value = alumno
+  showPaymentModal.value = true
+  error.value = ""
+  
+  let defaultMembresiaId = ""
+  const ultimoPago = getUltimoPago(alumno)
+  
+  if (ultimoPago && ultimoPago.membresia && ultimoPago.membresia.nombre) {
+    const mEncontrada = membresias.value.find(m => m.nombre === ultimoPago.membresia.nombre)
+    if (mEncontrada) {
+      defaultMembresiaId = mEncontrada._id
+    }
+  }
+  
+  if (!defaultMembresiaId) {
+    const defaultM = membresias.value.find(m => m.nombre.includes('3 días')) || membresias.value[0]
+    if (defaultM) defaultMembresiaId = defaultM._id
+  }
+  
+  nuevoPago.value = {
+    fechaPago: formatDateAR(new Date()),
+    mesQueAbona: new Date().getMonth() + 1,
+    tipoPago: "efectivo",
+    membresiaId: defaultMembresiaId,
+    montoDescuento: "",
+    medioDescuento: "transferencia",
+    pagoSimilar: false,
+    montoSimilar: "",
+    pagoParcial: false,
+    montoParcial: ""
+  }
+
+  if (hasPendingPartialPayment(alumno)) {
+    const ultimoPago = getUltimoPago(alumno)
+    nuevoPago.value.tipoPago = normalizePaymentType(ultimoPago.tipo || ultimoPago.detalle) || "efectivo"
+    nuevoPago.value.membresiaId = ultimoPago.membresia?.id || ultimoPago.membresia?._id || defaultMembresiaId
+    nuevoPago.value.montoSimilar = String(getPendingPartialAmount(alumno))
+    nuevoPago.value.medioDescuento = ultimoPago.medio || "transferencia"
+  }
+}
+
+function closePaymentModal() {
+  showPaymentModal.value = false
+  alumnoSeleccionado.value = null
+  entrenadorSeleccionado.value = null
+  error.value = ""
+  nuevoPago.value = {
+    fechaPago: "",
+    mesQueAbona: new Date().getMonth() + 1,
+    tipoPago: "efectivo",
+    membresiaId: "",
+    montoDescuento: "",
+    medioDescuento: "transferencia",
+    pagoSimilar: false,
+    montoSimilar: "",
+    pagoParcial: false,
+    montoParcial: ""
+  }
+}
+
+async function registrarPago() {
+  if (!alumnoSeleccionado.value) return
+  
+  if (!nuevoPago.value.fechaPago) {
+    error.value = "La fecha de pago es requerida"
+    return
+  }
+  
+  const fechaRegex = /^(\d{2})\/(\d{2})\/(\d{4})$/
+  if (!fechaRegex.test(nuevoPago.value.fechaPago)) {
+    error.value = "La fecha debe tener el formato dd/mm/yyyy"
+    return
+  }
+  
+  const fechaPagoDate = parseDisplayDate(nuevoPago.value.fechaPago)
+  
+  if (!fechaPagoDate || isNaN(fechaPagoDate.getTime())) {
+    error.value = "La fecha ingresada no es válida"
+    return
+  }
+  
+  fechaPagoDate.setHours(0, 0, 0, 0)
+  
+  const tipoFinal = nuevoPago.value.tipoPago
+  
+  const selectedM = membresias.value.find(m => m._id === nuevoPago.value.membresiaId)
+  const hadPendingPartial = hasPendingPartialPayment(alumnoSeleccionado.value)
+  const ultimoPago = getUltimoPago(alumnoSeleccionado.value)
+  const montoBase = getBaseAmountForCurrentPayment(selectedM, alumnoSeleccionado.value)
+  let montoCalculado = montoBase
+
+  if (nuevoPago.value.pagoParcial) {
+    if (isPromisePayment(tipoFinal)) {
+      error.value = "No podés registrar una promesa de pago como pago parcial."
+      return
+    }
+
+    if (nuevoPago.value.montoParcial === "" || isNaN(Number(nuevoPago.value.montoParcial))) {
+      error.value = "Ingresá el monto abonado en esta parte del pago."
+      return
+    }
+
+    const montoParcial = Number(nuevoPago.value.montoParcial)
+    if (montoParcial <= 0) {
+      error.value = "El monto parcial debe ser mayor a cero."
+      return
+    }
+
+    if (montoParcial > montoBase) {
+      error.value = "El monto parcial no puede superar el total pendiente."
+      return
+    }
+
+    montoCalculado = montoParcial
+  }
+
+  const isNewPagoPartial = nuevoPago.value.pagoParcial || hadPendingPartial
+  const isNewPagoPromise = isPromisePayment(tipoFinal)
+
+  if (!isNewPagoPartial && !isNewPagoPromise) {
+    const hasDuplicatePeriod = alumnoSeleccionado.value.historialPagos?.some(p => {
+      const isExistingPagoPartial = p.esParcial || p.completaParcial
+      const isExistingPagoPromise = isPromisePayment(p.tipo || p.detalle)
+      return p.mesQueAbona === Number(nuevoPago.value.mesQueAbona) &&
+             p.anioQueAbona === paymentYear.value &&
+             !isExistingPagoPartial &&
+             !isExistingPagoPromise
+    })
+
+    if (hasDuplicatePeriod) {
+      error.value = `El alumno ya tiene un pago completo registrado para el período ${nuevoPago.value.mesQueAbona}/${paymentYear.value}.`
+      return
+    }
+  }
+
+  const completaConMontoExacto = nuevoPago.value.pagoParcial && montoCalculado === montoBase
+  const sameDayPayment = findSameDayPayment(alumnoSeleccionado.value, fechaPagoDate)
+  let allowDuplicateSameDay = false
+
+  if (sameDayPayment) {
+    const confirmed = confirm("Este alumno ya tiene un pago cargado en esa misma fecha. ¿Querés registrar otro pago igualmente?")
+    if (!confirmed) {
+      error.value = "No se registró el pago duplicado."
+      return
+    }
+    allowDuplicateSameDay = true
+  }
+
+  const nuevoPagoObj = {
+    fecha: fechaPagoDate,
+    mesQueAbona: Number(nuevoPago.value.mesQueAbona || (fechaPagoDate.getMonth() + 1)),
+    anioQueAbona: paymentYear.value,
+    tipo: isPromisePayment(tipoFinal) ? "promesa de pago" : tipoFinal,
+    detalle: completaConMontoExacto
+      ? "Completa pago parcial"
+      : nuevoPago.value.pagoParcial
+      ? "Pago parcial"
+      : hadPendingPartial
+        ? "Completa pago parcial"
+        : isPromisePayment(tipoFinal)
+      ? "Promesa de Pago"
+      : isDiscountPayment(tipoFinal)
+        ? "Descuento"
+        : "",
+    medio: isDiscountPayment(tipoFinal) ? nuevoPago.value.medioDescuento : "",
+    esParcial: nuevoPago.value.pagoParcial && !completaConMontoExacto,
+    completaParcial: completaConMontoExacto || (!nuevoPago.value.pagoParcial && hadPendingPartial),
+    montoObjetivo: nuevoPago.value.pagoParcial && !completaConMontoExacto
+      ? (hadPendingPartial ? Number(ultimoPago?.montoObjetivo || montoBase + montoCalculado) : montoBase)
+      : (hadPendingPartial ? Number(ultimoPago?.montoObjetivo || montoBase) : null),
+    saldoPendiente: nuevoPago.value.pagoParcial && !completaConMontoExacto ? Number((montoBase - montoCalculado).toFixed(2)) : 0,
+    clientCreatedAt: new Date().toISOString(),
+    membresia: selectedM ? {
+      id: selectedM._id,
+      nombre: selectedM.nombre,
+      precio: selectedM.precio
+    } : null,
+    ...resolveStoredAmounts({
+      tipoPago: tipoFinal,
+      montoIngresado: montoCalculado,
+      membresiaPrecio: Number(selectedM?.precio || 0),
+      pagoParcial: nuevoPago.value.pagoParcial
+    }),
+    allowDuplicateSameDay
+  }
+  
+  try {
+    isLoading.value = true
+    const updatedAlumno = await MongoService.addPago(alumnoSeleccionado.value._id || alumnoSeleccionado.value.id, nuevoPagoObj)
+    
+    replaceAlumnoInTrainer(entrenadorSeleccionado.value?._id, updatedAlumno)
+    
+    closePaymentModal()
+  } catch (e) {
+    console.error(e)
+    if (e.status === 409 && e.code === "DUPLICATE_PAYMENT_SAME_DAY") {
+      const confirmed = confirm("El sistema detectó que ya existe un pago ese mismo día. ¿Querés guardarlo igual?")
+      if (!confirmed) {
+        error.value = "No se registró el pago duplicado."
+        return
+      }
+
+      try {
+        const updatedAlumno = await MongoService.addPago(alumnoSeleccionado.value._id || alumnoSeleccionado.value.id, {
+          ...nuevoPagoObj,
+          allowDuplicateSameDay: true
+        })
+
+        replaceAlumnoInTrainer(entrenadorSeleccionado.value?._id, updatedAlumno)
+        closePaymentModal()
+        return
+      } catch (retryError) {
+        console.error(retryError)
+        error.value = retryError.message || "Error al registrar pago en MongoDB"
+        return
+      }
+    }
+
+    error.value = e.message || "Error al registrar pago en MongoDB"
+  } finally {
+    isLoading.value = false
   }
 }
 </script>
@@ -625,6 +1020,13 @@ async function eliminarPagoEditando() {
                     ? `${Math.abs(getDaysUntilPayment(alumno))} días de retraso`
                     : getDaysUntilPayment(alumno) === 0 ? '0 días de retraso' : `${getDaysUntilPayment(alumno)} días` }}
                 </span>
+                <button
+                  @click="desactivarAlumno(entrenador, alumno)"
+                  class="edit-payment-button deactivate-active-button"
+                  :disabled="deactivatingAlumnoId === getAlumnoId(alumno)"
+                >
+                  {{ deactivatingAlumnoId === getAlumnoId(alumno) ? "Desactivando..." : "Desactivar" }}
+                </button>
               </div>
             </div>
 
@@ -645,6 +1047,13 @@ async function eliminarPagoEditando() {
                   <button @click="reactivarAlumno(entrenador, alumno)" class="edit-payment-button">
                     Reactivar
                   </button>
+                  <button
+                    @click="eliminarAlumnoInactivo(entrenador, alumno)"
+                    class="edit-payment-button delete-inactive-button"
+                    :disabled="deletingInactiveAlumnoId === getAlumnoId(alumno)"
+                  >
+                    {{ deletingInactiveAlumnoId === getAlumnoId(alumno) ? "Eliminando..." : "Eliminar" }}
+                  </button>
                 </div>
               </div>
             </div>
@@ -658,6 +1067,163 @@ async function eliminarPagoEditando() {
 
       <div v-if="entrenadores.length === 0" class="empty-state">
         <p>No hay entrenadores registrados</p>
+      </div>
+    </div>
+
+    <!-- Modal para registrar pago -->
+    <div v-if="showPaymentModal && alumnoSeleccionado" class="modal-overlay" @click.self="closePaymentModal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>{{ hasPendingPartialPayment(alumnoSeleccionado) ? 'Completar Pago' : 'Registrar Pago' }}</h2>
+          <button @click="closePaymentModal" class="close-button">×</button>
+        </div>
+        
+        <div class="modal-student-info">
+          <p><strong>Alumno:</strong> {{ alumnoSeleccionado.nombre }} {{ alumnoSeleccionado.apellido }}</p>
+        </div>
+        
+        <form @submit.prevent="registrarPago" class="modal-form">
+          <div class="form-group">
+            <label for="fechaPagoPago">Fecha de Pago *</label>
+            <DateField
+              input-id="fechaPagoPago"
+              :model-value="nuevoPago.fechaPago"
+              @update:model-value="value => nuevoPago.fechaPago = value"
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="mesQueAbonaPago">Mes que abona *</label>
+            <select
+              id="mesQueAbonaPago"
+              v-model="nuevoPago.mesQueAbona"
+              required
+              class="select-input"
+            >
+              <option v-for="mes in mesesQueAbona" :key="mes.value" :value="mes.value">
+                {{ mes.label }} {{ paymentYear }}
+              </option>
+            </select>
+          </div>
+
+          <div class="form-group checkbox-group">
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                v-model="nuevoPago.pagoSimilar"
+                :disabled="!getUltimoPago(alumnoSeleccionado)"
+                @change="handlePagoSimilarChange"
+              />
+              Pago recurrente
+            </label>
+            <span v-if="!getUltimoPago(alumnoSeleccionado)" class="checkbox-help">
+              Disponible cuando el alumno ya tiene un pago previo.
+            </span>
+          </div>
+
+          <div class="form-group checkbox-group" v-if="!isPromisePayment(nuevoPago.tipoPago)">
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                v-model="nuevoPago.pagoParcial"
+              />
+              Registrar pago por partes
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label for="tipoPago">Tipo de Pago *</label>
+            <select
+              id="tipoPago"
+              v-model="nuevoPago.tipoPago"
+              required
+              class="select-input"
+            >
+              <option value="efectivo">Efectivo</option>
+              <option value="transferencia">Transferencia</option>
+              <option value="descuento">Descuento</option>
+              <option value="promesa de pago">Promesa de Pago</option>
+            </select>
+          </div>
+
+          <div class="form-group" v-if="nuevoPago.pagoSimilar">
+            <label for="montoSimilarPago">Monto informado del pago *</label>
+            <input
+              id="montoSimilarPago"
+              v-model="nuevoPago.montoSimilar"
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="Monto del último pago"
+              required
+            />
+          </div>
+
+          <div class="form-group" v-if="nuevoPago.pagoParcial">
+            <label for="montoParcialPago">Monto abonado en esta parte *</label>
+            <input
+              id="montoParcialPago"
+              v-model="nuevoPago.montoParcial"
+              type="number"
+              min="0"
+              step="0.01"
+              :placeholder="hasPendingPartialPayment(alumnoSeleccionado) ? 'Monto a completar parcialmente' : 'Monto abonado ahora'"
+              required
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="membresiaPago">Membresía *</label>
+            <select
+              id="membresiaPago"
+              v-model="nuevoPago.membresiaId"
+              required
+              class="select-input"
+            >
+              <option v-for="m in membresias" :key="m._id" :value="m._id">
+                {{ m.nombre }} - ${{ m.precio.toLocaleString() }}
+              </option>
+            </select>
+          </div>
+
+          <div class="form-group" v-if="isDiscountPayment(nuevoPago.tipoPago)">
+            <label for="medioDescuentoPago">Medio del Descuento *</label>
+            <select
+              id="medioDescuentoPago"
+              v-model="nuevoPago.medioDescuento"
+              class="select-input"
+            >
+              <option value="transferencia">Transferencia</option>
+              <option value="efectivo">Efectivo</option>
+            </select>
+          </div>
+
+          <div class="form-group" v-if="isDiscountPayment(nuevoPago.tipoPago) && !nuevoPago.pagoSimilar">
+            <label for="montoDescuentoPago">Monto (Final) *</label>
+            <input
+              id="montoDescuentoPago"
+              v-model="nuevoPago.montoDescuento"
+              type="number"
+              min="0"
+              placeholder="Ingrese el monto con descuento"
+              required
+            />
+            <small>Se guarda como dato informativo. Las estadísticas toman el valor de la membresía.</small>
+          </div>
+
+          <div v-if="error" class="error-message">
+            {{ error }}
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" @click="closePaymentModal" class="cancel-button">
+              Cancelar
+            </button>
+            <button type="submit" class="submit-button">
+              {{ hasPendingPartialPayment(alumnoSeleccionado) ? 'Completar Pago' : 'Registrar Pago' }}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
 
@@ -696,7 +1262,7 @@ async function eliminarPagoEditando() {
             <label for="edit-mes-que-abona">Mes que abona *</label>
             <select id="edit-mes-que-abona" v-model="pagoActual.mesQueAbona">
               <option v-for="mes in mesesQueAbona" :key="mes.value" :value="mes.value">
-                {{ mes.label }} {{ currentYear }}
+                {{ mes.label }} {{ editPaymentYear }}
               </option>
             </select>
           </div>
@@ -1062,6 +1628,32 @@ async function eliminarPagoEditando() {
   background: rgba(255, 215, 0, 0.08);
 }
 
+.delete-inactive-button {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #b91c1c;
+}
+
+.deactivate-active-button {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #f59e0b;
+}
+
+.deactivate-active-button:hover {
+  background: #fef3c7;
+}
+
+.delete-inactive-button:hover {
+  background: #fecaca;
+}
+
+.deactivate-active-button:disabled,
+.delete-inactive-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .payment-type {
   color: var(--header-text);
   text-transform: capitalize;
@@ -1371,4 +1963,54 @@ async function eliminarPagoEditando() {
 .mini-type { color: var(--subtitle-text); }
 .mini-membresia { color: var(--rheb-accent-green); }
 .mini-monto { font-weight: 600; color: var(--rheb-primary-green); }
+
+.modal-student-info {
+  padding: 16px 24px;
+  background: var(--input-bg);
+  border-bottom: 1px solid var(--input-border);
+  margin-bottom: 16px;
+}
+
+.checkbox-group {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin-top: 4px;
+  margin-bottom: 8px;
+  gap: 8px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--header-text);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.checkbox-help {
+  color: var(--subtitle-text);
+  font-size: 0.82rem;
+  font-weight: 500;
+  margin-left: 30px;
+}
+
+.checkbox-label input[type="checkbox"] {
+  -webkit-appearance: auto !important;
+  appearance: auto !important;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  cursor: pointer;
+}
+
+.register-payment-btn {
+  background: color-mix(in srgb, var(--rheb-primary-green) 12%, transparent);
+  color: var(--rheb-primary-green);
+  border-color: var(--rheb-primary-green);
+}
 </style>

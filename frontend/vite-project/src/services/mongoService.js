@@ -390,6 +390,26 @@ export const MongoService = {
         }
     },
 
+    async deleteAlumnoPermanentemente(id, actor = {}) {
+        try {
+            const params = new URLSearchParams();
+            if (actor.role) params.append('actorRole', actor.role);
+            if (actor.userId) params.append('actorUserId', actor.userId);
+            const query = params.toString();
+            const response = await fetch(`${API_URL}/alumnos/${id}/permanent${query ? `?${query}` : ''}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Error al eliminar alumno');
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;
+        }
+    },
+
     async reactivarAlumno(id, actor) {
         try {
             const response = await fetch(`${API_URL}/alumnos/${id}/reactivar`, {

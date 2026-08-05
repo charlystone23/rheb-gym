@@ -5,10 +5,12 @@ import DateField from "../components/DateField.vue"
 import { MongoService } from "../services/mongoService"
 import { formatDateAR, formatDateInput, getMonthRangeDisplay, parseDisplayDate } from "../utils/date"
 import { getStoredUser } from "../utils/authContext"
+import * as XLSX from "xlsx"
 
 const router = useRouter()
 const entrenadores = ref([])
 const expenses = ref([])
+const horarios = ref([])
 const isLoading = ref(false)
 const error = ref("")
 const currentUser = ref(null)
@@ -56,13 +58,15 @@ async function loadStatsData() {
   try {
     isLoading.value = true
     currentUser.value = getStoredUser()
-    const [trainersData, expensesData] = await Promise.all([
+    const [trainersData, expensesData, horariosData] = await Promise.all([
       MongoService.getEntrenadores(true),
-      MongoService.getExpenses(selectedMonth.value + 1, selectedYear.value)
+      MongoService.getExpenses(selectedMonth.value + 1, selectedYear.value),
+      MongoService.getHorarios()
     ])
 
     entrenadores.value = trainersData || []
     expenses.value = expensesData || []
+    horarios.value = horariosData || []
     syncTrainerFiltersWithGlobalRange()
   } catch (e) {
     console.error("Error loading stats:", e)
@@ -338,6 +342,16 @@ function wasAlumnoActiveInRange(alumno, startDate, endDate) {
   return fechaAlta <= endDate && (!fechaInactivacion || fechaInactivacion >= startDate)
 }
 
+function isAlumnoCurrentlyActive(alumno) {
+  return alumno?.estado !== "inactivo"
+}
+
+function getActiveAlumnosForStats(entrenador, startDate, endDate) {
+  return (entrenador.alumnos || []).filter((alumno) =>
+    isAlumnoCurrentlyActive(alumno) && wasAlumnoActiveInRange(alumno, startDate, endDate)
+  )
+}
+
 function getEstimatedAmountForAlumnoInRange(alumno, startDate, endDate) {
   return getPeriodStartsInRange(startDate, endDate).reduce((acc, periodDate) => {
     const { start, end } = getPeriodBoundsFromDate(periodDate)
@@ -351,9 +365,7 @@ const statsPorEntrenador = computed(() => {
   const statusReferenceDate = getStatusReferenceDate(selectedYear.value, selectedMonth.value)
 
   return entrenadoresVisibles.value.map((entrenador) => {
-    const alumnosActivosEnMes = (entrenador.alumnos || []).filter((alumno) =>
-      wasAlumnoActiveInRange(alumno, monthBounds.start, monthBounds.end)
-    )
+    const alumnosActivosEnMes = getActiveAlumnosForStats(entrenador, monthBounds.start, monthBounds.end)
     const totalAlumnos = alumnosActivosEnMes.length
     const alDia = alumnosActivosEnMes.filter((a) => getPaymentStatus(a, statusReferenceDate) === "green").length
     const proximoVencer = alumnosActivosEnMes.filter((a) => getPaymentStatus(a, statusReferenceDate) === "yellow").length
@@ -421,8 +433,7 @@ const statsGenerales = computed(() => {
   let montoEstimadoMes = 0
   entrenadoresVisibles.value.forEach((entrenador) => {
     const { start, end } = getMonthBounds(selectedYear.value, selectedMonth.value)
-    ;(entrenador.alumnos || [])
-      .filter((alumno) => wasAlumnoActiveInRange(alumno, start, end))
+    getActiveAlumnosForStats(entrenador, start, end)
       .forEach((alumno) => {
       montoEstimadoMes += getEstimatedAmountForAlumnoInRange(alumno, start, end)
       alumno.historialPagos.forEach((pago) => {
@@ -469,6 +480,115 @@ function goBack() {
 function goToExpenses() {
   router.push("/admin/expenses")
 }
+
+async function exportToExcel() {
+  try {
+    const monthBounds = getMonthBounds(selectedYear.value, selectedMonth.value)
+    const statusReferenceDate = getStatusReferenceDate(selectedYear.value, selectedMonth.value)
+    const monthLabel = meses[selectedMonth.value].label
+
+    // 1. Prepare data for "Alumnos" Sheet
+    const alumnosRows = []
+
+    entrenadoresVisibles.value.forEach((entrenador) => {
+      const alumnosActivosEnMes = getActiveAlumnosForStats(entrenador, monthBounds.start, monthBounds.end)
+
+      alumnosActivosEnMes.forEach((alumno) => {
+        const membershipSnapshot = getAlumnoMembershipSnapshot(alumno, monthBounds.end)
+        const paymentStatus = getPaymentStatus(alumno, statusReferenceDate)
+        const pagosMes = getPagosForExactPeriodo(alumno, statusReferenceDate)
+
+        // Payment status translation
+        let estadoPagoText = "Moroso / En Deuda"
+        if (paymentStatus === "green") estadoPagoText = "Al Día"
+        else if (paymentStatus === "yellow") estadoPagoText = "A Vencer"
+
+        // Sum payments for the month
+        const totalAbonado = pagosMes.reduce((sum, p) => sum + getPaymentAmount(p), 0)
+        const detallePagos = pagosMes.map(p => {
+          const pFecha = formatDateAR(p.fecha)
+          const pMonto = getPaymentAmount(p)
+          const pTipo = p.tipo || 'N/A'
+          const pDetalle = p.detalle ? ` (${p.detalle})` : ''
+          return `${pFecha}: $${pMonto} [${pTipo}]${pDetalle}`
+        }).join(' | ')
+
+        alumnosRows.push({
+          "Alumno": `${alumno.nombre} ${alumno.apellido}`,
+          "Entrenador (A quién pertenece)": `${entrenador.nombre} ${entrenador.apellido || ''}`.trim(),
+          "Membresía": membershipSnapshot?.nombre || 'Ninguna',
+          "Precio Membresía": `$ ${(membershipSnapshot?.precio || 0).toLocaleString('es-AR')}`,
+          "Estado de Pago del Mes": estadoPagoText,
+          "Monto Abonado": `$ ${(totalAbonado || 0).toLocaleString('es-AR')}`,
+          "Detalle de Pagos": detallePagos || 'Sin pagos en este mes'
+        })
+      })
+    })
+
+    // 2. Prepare data for "Resumen del Mes" Sheet
+    const resumenRows = []
+    if (statsGenerales.value) {
+      resumenRows.push({ "Concepto": "Mes", "Valor": `${monthLabel} ${selectedYear.value}` })
+      resumenRows.push({ "Concepto": "Total Alumnos Activos", "Valor": statsGenerales.value.totalAlumnos })
+      resumenRows.push({ "Concepto": "Alumnos Al Día", "Valor": statsGenerales.value.alDia })
+      resumenRows.push({ "Concepto": "Alumnos A Vencer", "Valor": statsGenerales.value.proximoVencer })
+      resumenRows.push({ "Concepto": "Alumnos Morosos", "Valor": statsGenerales.value.deuda })
+      resumenRows.push({ "Concepto": "% Alumnos Al Día/A Vencer", "Valor": `${statsGenerales.value.porcentajeActivos}%` })
+      resumenRows.push({ "Concepto": "Recaudación Real del Mes", "Valor": `$ ${(statsGenerales.value.montoRealMes || 0).toLocaleString('es-AR')}` })
+      resumenRows.push({ "Concepto": "Recaudación Estimada (Fin de Mes)", "Valor": `$ ${(statsGenerales.value.montoEstimadoMes || 0).toLocaleString('es-AR')}` })
+      resumenRows.push({ "Concepto": "Gastos Totales del Mes", "Valor": `$ ${(statsGenerales.value.gastosMes || 0).toLocaleString('es-AR')}` })
+      resumenRows.push({ "Concepto": "Recaudación Neta", "Valor": `$ ${(statsGenerales.value.recaudacionNeta || 0).toLocaleString('es-AR')}` })
+    }
+
+    // Add list of expenses in Resumen tab as well
+    const gastosRows = []
+    if (expenses.value && expenses.value.length > 0) {
+      expenses.value.forEach(expense => {
+        gastosRows.push({
+          "Fecha Gasto": formatDateAR(expense.fecha),
+          "Detalle Gasto": expense.detalle,
+          "Monto Gasto": `$ ${(Number(expense.monto || 0)).toLocaleString('es-AR')}`
+        })
+      })
+    }
+
+    // 3. Create Workbook and Sheets
+    const wb = XLSX.utils.book_new()
+    
+    // Sheet 1: Alumnos
+    const wsAlumnos = XLSX.utils.json_to_sheet(alumnosRows)
+    
+    // Auto-adjust column widths for Alumnos sheet to make it look premium
+    const maxLens = {}
+    alumnosRows.forEach(row => {
+      Object.keys(row).forEach(key => {
+        const valStr = String(row[key] || '')
+        maxLens[key] = Math.max(maxLens[key] || key.length, valStr.length)
+      })
+    })
+    wsAlumnos['!cols'] = Object.keys(maxLens).map(key => ({ wch: maxLens[key] + 3 }))
+
+    XLSX.utils.book_append_sheet(wb, wsAlumnos, "Alumnos")
+
+    // Sheet 2: Resumen Financiero
+    const wsResumen = XLSX.utils.json_to_sheet(resumenRows)
+    wsResumen['!cols'] = [{ wch: 35 }, { wch: 20 }]
+    XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen del Mes")
+
+    // Add Expenses to Sheet 3
+    if (gastosRows.length > 0) {
+      const wsGastos = XLSX.utils.json_to_sheet(gastosRows)
+      wsGastos['!cols'] = [{ wch: 15 }, { wch: 45 }, { wch: 15 }]
+      XLSX.utils.book_append_sheet(wb, wsGastos, "Gastos del Mes")
+    }
+
+    // 4. Download file
+    XLSX.writeFile(wb, `Reporte_${monthLabel}_${selectedYear.value}.xlsx`)
+  } catch (err) {
+    console.error("Error al exportar Excel:", err)
+    alert("Hubo un error al generar el archivo Excel.")
+  }
+}
 </script>
 
 <template>
@@ -485,6 +605,13 @@ function goToExpenses() {
 
       <div class="header-right">
         <div class="header-filters">
+          <button @click="exportToExcel" class="export-excel-btn" title="Exportar a Excel" :disabled="isLoading">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+          </button>
           <label for="month-select">Mes:</label>
           <select id="month-select" v-model="selectedMonth" class="filter-select">
             <option v-for="m in meses" :key="m.val" :value="m.val">{{ m.label }}</option>
@@ -705,6 +832,31 @@ function goToExpenses() {
   font-weight: 700;
   color: var(--header-text);
   font-size: 0.9rem;
+}
+
+.export-excel-btn {
+  background: none;
+  border: none;
+  color: var(--rheb-primary-green);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  margin-right: 4px;
+}
+
+.export-excel-btn:hover {
+  background: var(--rheb-dark-grey);
+  color: #22c55e;
+  transform: scale(1.1);
+}
+
+.export-excel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .filter-select {
