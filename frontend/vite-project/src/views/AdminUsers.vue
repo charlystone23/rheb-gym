@@ -239,7 +239,7 @@ function goBack() {
             <p class="username">@{{ usuario.username }}</p>
             <div class="meta-row">
               <span :class="['role-badge', usuario.role]">
-                {{ usuario.role === 'admin' ? 'Administrador' : 'Entrenador' }}
+                {{ usuario.role === 'admin' || usuario.role === 'ADMIN' ? 'Administrador General' : (usuario.role === 'ADMIN_VENTAS' ? 'Admin. Ventas / Productos' : 'Entrenador') }}
               </span>
               <span v-if="usuario.fechaInactivacion" class="meta-note">
                 Inactivo desde {{ new Date(usuario.fechaInactivacion).toLocaleDateString('es-AR') }}
@@ -344,7 +344,8 @@ function goBack() {
               class="select-input"
             >
               <option value="entrenador">Entrenador</option>
-              <option value="admin">Administrador</option>
+              <option value="admin">Administrador General</option>
+              <option value="ADMIN_VENTAS">Administrador de Ventas / Productos</option>
             </select>
           </div>
 

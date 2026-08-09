@@ -30,8 +30,11 @@ async function handleLogin() {
         setAdminContext(response.user)
       }
       // Redirect based on role
-      if (response.user.role === 'admin') {
+      const role = response.user.role?.toUpperCase()
+      if (role === 'ADMIN') {
         router.push("/admin")
+      } else if (role === 'ADMIN_VENTAS') {
+        router.push("/sales")
       } else {
         router.push("/dashboard")
       }
