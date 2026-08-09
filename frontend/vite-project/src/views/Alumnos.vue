@@ -308,32 +308,64 @@ function isHistorialVisible(alumnoId) {
   return historialVisible.value[alumnoId] || false
 }
 
-function getPaymentStatus(alumno) {
-  const ultimoPago = getUltimoPago(alumno)
+function getPagoPeriodoInfo(pago) {
+  if (!pago) return null
+  const fechaPago = new Date(pago.fecha)
+  const month = Number(pago.mesQueAbona || (Number.isNaN(fechaPago.getTime()) ? null : fechaPago.getMonth() + 1))
+  const year = Number(pago.anioQueAbona || (Number.isNaN(fechaPago.getTime()) ? null : fechaPago.getFullYear()))
+  if (!month || !year || month < 1 || month > 12) return null
+  return { month, year, date: new Date(year, month - 1, 1) }
+}
+
+function getUltimoPagoHastaPeriodo(alumno, referenceDate = new Date()) {
+  if (!alumno.historialPagos || alumno.historialPagos.length === 0) return null
+
+  const referenceMonth = referenceDate.getMonth() + 1
+  const referenceYear = referenceDate.getFullYear()
+
+  return [...alumno.historialPagos]
+    .filter((pago) => {
+      const periodo = getPagoPeriodoInfo(pago)
+      if (!periodo) return false
+      return periodo.year < referenceYear || (periodo.year === referenceYear && periodo.month <= referenceMonth)
+    })
+    .sort((a, b) => {
+      const periodoA = getPagoPeriodoInfo(a)
+      const periodoB = getPagoPeriodoInfo(b)
+      const yearDiff = (periodoB?.year || 0) - (periodoA?.year || 0)
+      if (yearDiff !== 0) return yearDiff
+      const monthDiff = (periodoB?.month || 0) - (periodoA?.month || 0)
+      if (monthDiff !== 0) return monthDiff
+      return comparePagosDesc(a, b)
+    })[0] || null
+}
+
+function getPaymentStatus(alumno, referenceDate = new Date()) {
+  const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
   if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno))) {
     return "red"
   }
 
-  const hoy = new Date()
+  const hoy = new Date(referenceDate)
   hoy.setHours(0, 0, 0, 0)
   
   let proximaFechaPago = new Date()
   if (!ultimoPago) {
     proximaFechaPago = new Date(alumno.fechaRegistro || alumno.createdAt || hoy)
   } else {
-    proximaFechaPago = new Date(ultimoPago.fecha)
-    proximaFechaPago.setDate(proximaFechaPago.getDate() + 30)
+    const periodo = getPagoPeriodoInfo(ultimoPago)
+    proximaFechaPago = periodo?.date ? new Date(periodo.date.getFullYear(), periodo.date.getMonth() + 1, 1) : new Date(ultimoPago.fecha)
   }
   proximaFechaPago.setHours(0, 0, 0, 0)
   
   const diasHastaPago = Math.ceil((proximaFechaPago - hoy) / (1000 * 60 * 60 * 24))
   
   if (diasHastaPago < 0) {
-    return "red" // Pago retrasado
+    return "red"
   } else if (diasHastaPago <= 5) {
-    return "yellow" // 5 días o menos antes del pago
+    return "yellow"
   } else {
-    return "green" // Al día
+    return "green"
   }
 }
 
@@ -342,11 +374,19 @@ function formatDate(date) {
 }
 
 function formatNextPaymentDate(alumno) {
-  const ultimoPago = getUltimoPago(alumno)
+  const ultimoPago = getUltimoPagoHastaPeriodo(alumno)
   if (!ultimoPago) return "Sin pago"
   if (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle)) return "Promesa pendiente"
   if (hasPendingPartialPayment(alumno)) return "Pago parcial pendiente"
   
+  const periodo = getPagoPeriodoInfo(ultimoPago)
+  if (periodo?.date) {
+    const proximaFecha = new Date(periodo.date.getFullYear(), periodo.date.getMonth() + 1, 1)
+    const dia = String(proximaFecha.getDate()).padStart(2, '0')
+    const mes = String(proximaFecha.getMonth() + 1).padStart(2, '0')
+    const año = proximaFecha.getFullYear()
+    return `${dia}/${mes}/${año}`
+  }
   const fechaPago = new Date(ultimoPago.fecha)
   const proximaFecha = new Date(fechaPago)
   proximaFecha.setDate(proximaFecha.getDate() + 30)
