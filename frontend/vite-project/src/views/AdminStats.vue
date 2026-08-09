@@ -276,8 +276,8 @@ function getPaymentStatus(alumno, referenceDate = new Date()) {
   if (!ultimoPago) {
     nextPaymentDate = new Date(alumno.fechaRegistro || alumno.createdAt || today)
   } else {
-    const periodo = getPagoPeriodoInfo(ultimoPago)
-    nextPaymentDate = periodo?.date ? new Date(periodo.date.getFullYear(), periodo.date.getMonth() + 1, 1) : new Date(ultimoPago.fecha)
+    nextPaymentDate = new Date(ultimoPago.fecha)
+    nextPaymentDate.setDate(nextPaymentDate.getDate() + 30)
   }
   nextPaymentDate.setHours(0, 0, 0, 0)
 
