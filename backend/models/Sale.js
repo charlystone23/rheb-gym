@@ -5,6 +5,7 @@ const SaleItemSchema = new mongoose.Schema({
     nombre: { type: String }, // Nombre histórico en momento de venta
     cantidad: { type: Number, required: true },
     precioUnitario: { type: Number, required: true },
+    precioCosto: { type: Number, default: 0 },
     subtotal: { type: Number, required: true }
 }, {
     _id: true,

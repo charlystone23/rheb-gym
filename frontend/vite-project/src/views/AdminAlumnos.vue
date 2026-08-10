@@ -14,6 +14,8 @@ const expandedTrainers = ref({})
 const expandedHistory = ref({})
 const membresias = ref([])
 const showEditPaymentModal = ref(false)
+const showConfirmPaymentStep = ref(false)
+const pagoAConfirmar = ref(null)
 const isSavingPayment = ref(false)
 const isDeletingPayment = ref(false)
 const deactivatingAlumnoId = ref("")
@@ -72,6 +74,11 @@ const mesesQueAbona = [
   { value: 11, label: "Noviembre" },
   { value: 12, label: "Diciembre" }
 ]
+
+function getNombreMes(mesNum) {
+  const m = mesesQueAbona.find(item => item.value === Number(mesNum))
+  return m ? m.label : `Mes ${mesNum}`
+}
 
 function normalizePaymentType(tipo) {
   const normalized = String(tipo || "").trim().toLowerCase()
@@ -747,6 +754,8 @@ function openPaymentModal(entrenador, alumno) {
 
 function closePaymentModal() {
   showPaymentModal.value = false
+  showConfirmPaymentStep.value = false
+  pagoAConfirmar.value = null
   alumnoSeleccionado.value = null
   entrenadorSeleccionado.value = null
   error.value = ""
@@ -764,8 +773,9 @@ function closePaymentModal() {
   }
 }
 
-async function registrarPago() {
+function prepararConfirmacionPago() {
   if (!alumnoSeleccionado.value) return
+  error.value = ""
   
   if (!nuevoPago.value.fechaPago) {
     error.value = "La fecha de pago es requerida"
@@ -779,16 +789,13 @@ async function registrarPago() {
   }
   
   const fechaPagoDate = parseDisplayDate(nuevoPago.value.fechaPago)
-  
   if (!fechaPagoDate || isNaN(fechaPagoDate.getTime())) {
     error.value = "La fecha ingresada no es válida"
     return
   }
-  
   fechaPagoDate.setHours(0, 0, 0, 0)
   
   const tipoFinal = nuevoPago.value.tipoPago
-  
   const selectedM = membresias.value.find(m => m._id === nuevoPago.value.membresiaId)
   const hadPendingPartial = hasPendingPartialPayment(alumnoSeleccionado.value)
   const ultimoPago = getUltimoPago(alumnoSeleccionado.value)
@@ -852,7 +859,7 @@ async function registrarPago() {
     allowDuplicateSameDay = true
   }
 
-  const nuevoPagoObj = {
+  pagoAConfirmar.value = {
     fecha: fechaPagoDate,
     mesQueAbona: Number(nuevoPago.value.mesQueAbona || (fechaPagoDate.getMonth() + 1)),
     anioQueAbona: paymentYear.value,
@@ -889,6 +896,20 @@ async function registrarPago() {
     }),
     allowDuplicateSameDay
   }
+
+  showConfirmPaymentStep.value = true
+}
+
+function volverAEditarPago() {
+  showConfirmPaymentStep.value = false
+  error.value = ""
+}
+
+async function confirmarYGuardarPago() {
+  if (!alumnoSeleccionado.value || !pagoAConfirmar.value) return
+  error.value = ""
+  
+  const nuevoPagoObj = pagoAConfirmar.value
   
   try {
     isLoading.value = true
@@ -1106,156 +1127,214 @@ async function registrarPago() {
     <div v-if="showPaymentModal && alumnoSeleccionado" class="modal-overlay" @click.self="closePaymentModal">
       <div class="modal-content">
         <div class="modal-header">
-          <h2>{{ hasPendingPartialPayment(alumnoSeleccionado) ? 'Completar Pago' : 'Registrar Pago' }}</h2>
+          <h2>{{ showConfirmPaymentStep ? 'Confirmar Registro de Pago' : (hasPendingPartialPayment(alumnoSeleccionado) ? 'Completar Pago' : 'Registrar Pago') }}</h2>
           <button @click="closePaymentModal" class="close-button">×</button>
         </div>
         
-        <div class="modal-student-info">
-          <p><strong>Alumno:</strong> {{ alumnoSeleccionado.nombre }} {{ alumnoSeleccionado.apellido }}</p>
-        </div>
-        
-        <form @submit.prevent="registrarPago" class="modal-form">
-          <div class="form-group">
-            <label for="fechaPagoPago">Fecha de Pago *</label>
-            <DateField
-              input-id="fechaPagoPago"
-              :model-value="nuevoPago.fechaPago"
-              @update:model-value="value => nuevoPago.fechaPago = value"
-            />
+        <!-- PASO 1: FORMULARIO DE CARGA -->
+        <template v-if="!showConfirmPaymentStep">
+          <div class="modal-student-info">
+            <p><strong>Alumno:</strong> {{ alumnoSeleccionado.nombre }} {{ alumnoSeleccionado.apellido }}</p>
           </div>
-
-          <div class="form-group">
-            <label for="mesQueAbonaPago">Mes que abona *</label>
-            <select
-              id="mesQueAbonaPago"
-              v-model="nuevoPago.mesQueAbona"
-              required
-              class="select-input"
-            >
-              <option v-for="mes in mesesQueAbona" :key="mes.value" :value="mes.value">
-                {{ mes.label }} {{ paymentYear }}
-              </option>
-            </select>
-          </div>
-
-          <div class="form-group checkbox-group">
-            <label class="checkbox-label">
-              <input
-                type="checkbox"
-                v-model="nuevoPago.pagoSimilar"
-                :disabled="!getUltimoPago(alumnoSeleccionado)"
-                @change="handlePagoSimilarChange"
+          
+          <form @submit.prevent="prepararConfirmacionPago" class="modal-form">
+            <div class="form-group">
+              <label for="fechaPagoPago">Fecha de Pago *</label>
+              <DateField
+                input-id="fechaPagoPago"
+                :model-value="nuevoPago.fechaPago"
+                @update:model-value="value => nuevoPago.fechaPago = value"
               />
-              Pago recurrente
-            </label>
-            <span v-if="!getUltimoPago(alumnoSeleccionado)" class="checkbox-help">
-              Disponible cuando el alumno ya tiene un pago previo.
-            </span>
-          </div>
+            </div>
 
-          <div class="form-group checkbox-group" v-if="!isPromisePayment(nuevoPago.tipoPago)">
-            <label class="checkbox-label">
+            <div class="form-group">
+              <label for="mesQueAbonaPago">Mes que abona *</label>
+              <select
+                id="mesQueAbonaPago"
+                v-model="nuevoPago.mesQueAbona"
+                required
+                class="select-input"
+              >
+                <option v-for="mes in mesesQueAbona" :key="mes.value" :value="mes.value">
+                  {{ mes.label }} {{ paymentYear }}
+                </option>
+              </select>
+            </div>
+
+            <div class="form-group checkbox-group">
+              <label class="checkbox-label">
+                <input
+                  type="checkbox"
+                  v-model="nuevoPago.pagoSimilar"
+                  :disabled="!getUltimoPago(alumnoSeleccionado)"
+                  @change="handlePagoSimilarChange"
+                />
+                Pago recurrente
+              </label>
+              <span v-if="!getUltimoPago(alumnoSeleccionado)" class="checkbox-help">
+                Disponible cuando el alumno ya tiene un pago previo.
+              </span>
+            </div>
+
+            <div class="form-group checkbox-group" v-if="!isPromisePayment(nuevoPago.tipoPago)">
+              <label class="checkbox-label">
+                <input
+                  type="checkbox"
+                  v-model="nuevoPago.pagoParcial"
+                />
+                Registrar pago por partes
+              </label>
+            </div>
+
+            <div class="form-group">
+              <label for="tipoPago">Tipo de Pago *</label>
+              <select
+                id="tipoPago"
+                v-model="nuevoPago.tipoPago"
+                required
+                class="select-input"
+              >
+                <option value="efectivo">Efectivo</option>
+                <option value="transferencia">Transferencia</option>
+                <option value="descuento">Descuento</option>
+                <option value="promesa de pago">Promesa de Pago</option>
+              </select>
+            </div>
+
+            <div class="form-group" v-if="nuevoPago.pagoSimilar">
+              <label for="montoSimilarPago">Monto informado del pago *</label>
               <input
-                type="checkbox"
-                v-model="nuevoPago.pagoParcial"
+                id="montoSimilarPago"
+                v-model="nuevoPago.montoSimilar"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="Monto del último pago"
+                required
               />
-              Registrar pago por partes
-            </label>
-          </div>
+            </div>
 
-          <div class="form-group">
-            <label for="tipoPago">Tipo de Pago *</label>
-            <select
-              id="tipoPago"
-              v-model="nuevoPago.tipoPago"
-              required
-              class="select-input"
-            >
-              <option value="efectivo">Efectivo</option>
-              <option value="transferencia">Transferencia</option>
-              <option value="descuento">Descuento</option>
-              <option value="promesa de pago">Promesa de Pago</option>
-            </select>
-          </div>
+            <div class="form-group" v-if="nuevoPago.pagoParcial">
+              <label for="montoParcialPago">Monto abonado en esta parte *</label>
+              <input
+                id="montoParcialPago"
+                v-model="nuevoPago.montoParcial"
+                type="number"
+                min="0"
+                step="0.01"
+                :placeholder="hasPendingPartialPayment(alumnoSeleccionado) ? 'Monto a completar parcialmente' : 'Monto abonado ahora'"
+                required
+              />
+            </div>
 
-          <div class="form-group" v-if="nuevoPago.pagoSimilar">
-            <label for="montoSimilarPago">Monto informado del pago *</label>
-            <input
-              id="montoSimilarPago"
-              v-model="nuevoPago.montoSimilar"
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder="Monto del último pago"
-              required
-            />
-          </div>
+            <div class="form-group">
+              <label for="membresiaPago">Membresía *</label>
+              <select
+                id="membresiaPago"
+                v-model="nuevoPago.membresiaId"
+                required
+                class="select-input"
+              >
+                <option v-for="m in membresias" :key="m._id" :value="m._id">
+                  {{ m.nombre }} - ${{ m.precio.toLocaleString() }}
+                </option>
+              </select>
+            </div>
 
-          <div class="form-group" v-if="nuevoPago.pagoParcial">
-            <label for="montoParcialPago">Monto abonado en esta parte *</label>
-            <input
-              id="montoParcialPago"
-              v-model="nuevoPago.montoParcial"
-              type="number"
-              min="0"
-              step="0.01"
-              :placeholder="hasPendingPartialPayment(alumnoSeleccionado) ? 'Monto a completar parcialmente' : 'Monto abonado ahora'"
-              required
-            />
-          </div>
+            <div class="form-group" v-if="isDiscountPayment(nuevoPago.tipoPago)">
+              <label for="medioDescuentoPago">Medio del Descuento *</label>
+              <select
+                id="medioDescuentoPago"
+                v-model="nuevoPago.medioDescuento"
+                class="select-input"
+              >
+                <option value="transferencia">Transferencia</option>
+                <option value="efectivo">Efectivo</option>
+              </select>
+            </div>
 
-          <div class="form-group">
-            <label for="membresiaPago">Membresía *</label>
-            <select
-              id="membresiaPago"
-              v-model="nuevoPago.membresiaId"
-              required
-              class="select-input"
-            >
-              <option v-for="m in membresias" :key="m._id" :value="m._id">
-                {{ m.nombre }} - ${{ m.precio.toLocaleString() }}
-              </option>
-            </select>
-          </div>
+            <div class="form-group" v-if="isDiscountPayment(nuevoPago.tipoPago) && !nuevoPago.pagoSimilar">
+              <label for="montoDescuentoPago">Monto (Final) *</label>
+              <input
+                id="montoDescuentoPago"
+                v-model="nuevoPago.montoDescuento"
+                type="number"
+                min="0"
+                placeholder="Ingrese el monto con descuento"
+                required
+              />
+              <small>Se guarda como dato informativo. Las estadísticas toman el valor de la membresía.</small>
+            </div>
 
-          <div class="form-group" v-if="isDiscountPayment(nuevoPago.tipoPago)">
-            <label for="medioDescuentoPago">Medio del Descuento *</label>
-            <select
-              id="medioDescuentoPago"
-              v-model="nuevoPago.medioDescuento"
-              class="select-input"
-            >
-              <option value="transferencia">Transferencia</option>
-              <option value="efectivo">Efectivo</option>
-            </select>
-          </div>
+            <div v-if="error" class="error-message">
+              {{ error }}
+            </div>
 
-          <div class="form-group" v-if="isDiscountPayment(nuevoPago.tipoPago) && !nuevoPago.pagoSimilar">
-            <label for="montoDescuentoPago">Monto (Final) *</label>
-            <input
-              id="montoDescuentoPago"
-              v-model="nuevoPago.montoDescuento"
-              type="number"
-              min="0"
-              placeholder="Ingrese el monto con descuento"
-              required
-            />
-            <small>Se guarda como dato informativo. Las estadísticas toman el valor de la membresía.</small>
-          </div>
+            <div class="modal-actions">
+              <button type="button" @click="closePaymentModal" class="cancel-button">
+                Cancelar
+              </button>
+              <button type="submit" class="submit-button">
+                Continuar a Confirmación →
+              </button>
+            </div>
+          </form>
+        </template>
 
-          <div v-if="error" class="error-message">
-            {{ error }}
-          </div>
+        <!-- PASO 2: PANTALLA DE CONFIRMACIÓN -->
+        <template v-else>
+          <div class="confirmation-container">
+            <div class="confirmation-question-card">
+              <div class="question-icon">❓</div>
+              <p class="question-text">
+                ¿Estás seguro que el pago de <strong>{{ alumnoSeleccionado.nombre }} {{ alumnoSeleccionado.apellido }}</strong> corresponde al período <strong>{{ getNombreMes(nuevoPago.mesQueAbona) }} {{ paymentYear }}</strong>?
+              </p>
+            </div>
 
-          <div class="modal-actions">
-            <button type="button" @click="closePaymentModal" class="cancel-button">
-              Cancelar
-            </button>
-            <button type="submit" class="submit-button">
-              {{ hasPendingPartialPayment(alumnoSeleccionado) ? 'Completar Pago' : 'Registrar Pago' }}
-            </button>
+            <div class="summary-card">
+              <h3>Resumen del Pago</h3>
+              <div class="summary-grid">
+                <div class="summary-item">
+                  <span class="summary-label">Alumno:</span>
+                  <span class="summary-value">{{ alumnoSeleccionado.nombre }} {{ alumnoSeleccionado.apellido }}</span>
+                </div>
+                <div class="summary-item highlight-period">
+                  <span class="summary-label">Período a abonar:</span>
+                  <span class="summary-value font-bold">{{ getNombreMes(nuevoPago.mesQueAbona) }} {{ paymentYear }}</span>
+                </div>
+                <div class="summary-item">
+                  <span class="summary-label">Fecha de Cobro:</span>
+                  <span class="summary-value">{{ nuevoPago.fechaPago }}</span>
+                </div>
+                <div class="summary-item">
+                  <span class="summary-label">Tipo de Pago:</span>
+                  <span class="summary-value badge-tipo">{{ pagoAConfirmar?.tipo }}</span>
+                </div>
+                <div class="summary-item">
+                  <span class="summary-label">Monto:</span>
+                  <span class="summary-value font-bold">${{ (pagoAConfirmar?.monto || 0).toLocaleString() }}</span>
+                </div>
+                <div class="summary-item" v-if="pagoAConfirmar?.membresia">
+                  <span class="summary-label">Membresía:</span>
+                  <span class="summary-value">{{ pagoAConfirmar.membresia.nombre }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="error" class="error-message">
+              {{ error }}
+            </div>
+
+            <div class="confirmation-actions">
+              <button type="button" @click="volverAEditarPago" class="back-button" :disabled="isLoading">
+                <span class="arrow">←</span> Volver a editar
+              </button>
+              <button type="button" @click="confirmarYGuardarPago" :disabled="isLoading" class="confirm-button">
+                {{ isLoading ? 'Guardando...' : '✓ Confirmar y Guardar Pago' }}
+              </button>
+            </div>
           </div>
-        </form>
+        </template>
       </div>
     </div>
 
@@ -2044,5 +2123,147 @@ async function registrarPago() {
   background: color-mix(in srgb, var(--rheb-primary-green) 12%, transparent);
   color: var(--rheb-primary-green);
   border-color: var(--rheb-primary-green);
+}
+
+.confirmation-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 10px;
+}
+
+.confirmation-question-card {
+  background: rgba(255, 215, 0, 0.08);
+  border: 2px solid var(--rheb-primary-green);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.question-icon {
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.question-text {
+  font-size: 1.05rem;
+  color: #FFFFFF;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.question-text strong {
+  color: var(--rheb-primary-green);
+  font-weight: 700;
+}
+
+.summary-card {
+  background: var(--rheb-dark-grey);
+  border: 1px solid #3A3A3A;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.summary-card h3 {
+  margin: 0 0 12px 0;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #A0A0A0;
+  border-bottom: 1px solid #333;
+  padding-bottom: 8px;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.summary-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.summary-item.highlight-period {
+  background: rgba(255, 215, 0, 0.12);
+  padding: 8px 12px;
+  border-radius: 8px;
+  border-left: 3px solid var(--rheb-primary-green);
+}
+
+.summary-label {
+  color: #BBB;
+  font-size: 0.9rem;
+}
+
+.summary-value {
+  color: #FFF;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.summary-value.font-bold {
+  font-weight: 700;
+  color: var(--rheb-primary-green);
+}
+
+.badge-tipo {
+  text-transform: capitalize;
+  background: #333;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.confirmation-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.back-button {
+  flex: 1;
+  background-color: var(--rheb-dark-grey);
+  color: #FFF;
+  border: 2px solid #555;
+  padding: 12px;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+.back-button:hover {
+  background-color: #333;
+  border-color: var(--rheb-primary-green);
+}
+
+.confirm-button {
+  flex: 1.4;
+  background: linear-gradient(135deg, var(--rheb-primary-green) 0%, #28a745 100%);
+  color: #111;
+  border: 2px solid var(--rheb-black);
+  padding: 12px;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+  transition: all 0.2s;
+}
+
+.confirm-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.4);
 }
 </style>

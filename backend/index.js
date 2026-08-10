@@ -1439,6 +1439,8 @@ app.post('/api/products', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin', 'ENTREN
             descripcion,
             precioVenta, price,
             precioCosto,
+            tipoProducto,
+            ingredientesCosto,
             stockActual, stock,
             stockMinimo,
             categoria, category,
@@ -1447,12 +1449,27 @@ app.post('/api/products', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin', 'ENTREN
 
         const cleanBarcode = (codigoBarras && codigoBarras.toString().trim() !== '') ? codigoBarras.toString().trim() : null;
 
+        let calculatedCost = precioCosto !== undefined ? Number(precioCosto) : 0;
+        let cleanIngredientes = [];
+
+        if (tipoProducto === 'RECETA' && Array.isArray(ingredientesCosto)) {
+            cleanIngredientes = ingredientesCosto
+                .filter(item => item && item.nombre && item.nombre.toString().trim() !== '')
+                .map(item => ({
+                    nombre: item.nombre.toString().trim(),
+                    costo: Number(item.costo) || 0
+                }));
+            calculatedCost = cleanIngredientes.reduce((sum, item) => sum + item.costo, 0);
+        }
+
         const newProduct = new Product({
             nombre: (nombre || name || '').trim(),
             codigoBarras: cleanBarcode,
             descripcion: descripcion || '',
             precioVenta: precioVenta !== undefined ? Number(precioVenta) : (Number(price) || 0),
-            precioCosto: precioCosto !== undefined ? Number(precioCosto) : 0,
+            precioCosto: calculatedCost,
+            tipoProducto: tipoProducto === 'RECETA' ? 'RECETA' : 'SIMPLE',
+            ingredientesCosto: cleanIngredientes,
             stockActual: stockActual !== undefined ? Number(stockActual) : (Number(stock) || 0),
             stockMinimo: stockMinimo !== undefined ? Number(stockMinimo) : 0,
             categoria: categoria || category || '',
@@ -1485,8 +1502,23 @@ app.put('/api/products/:id', requireRole(['ADMIN_VENTAS', 'ADMIN', 'admin', 'ENT
                 : null;
         }
 
-        const updatedProduct = await Product.findByIdAndUpdate(id, updateData, { new: true, runValidators: true });
-        if (!updatedProduct) return res.status(404).json({ error: 'Producto no encontrado' });
+        if (updateData.tipoProducto === 'RECETA' && Array.isArray(updateData.ingredientesCosto)) {
+            updateData.ingredientesCosto = updateData.ingredientesCosto
+                .filter(item => item && item.nombre && item.nombre.toString().trim() !== '')
+                .map(item => ({
+                    nombre: item.nombre.toString().trim(),
+                    costo: Number(item.costo) || 0
+                }));
+            updateData.precioCosto = updateData.ingredientesCosto.reduce((sum, item) => sum + item.costo, 0);
+        } else if (updateData.tipoProducto === 'SIMPLE') {
+            updateData.ingredientesCosto = [];
+        }
+
+        const productDoc = await Product.findById(id);
+        if (!productDoc) return res.status(404).json({ error: 'Producto no encontrado' });
+
+        Object.assign(productDoc, updateData);
+        const updatedProduct = await productDoc.save();
         res.json(updatedProduct);
     } catch (err) {
         if (err.code === 11000) {
@@ -1684,6 +1716,7 @@ app.post('/api/sales', async (req, res) => {
                 nombre: product.nombre,
                 cantidad: quantity,
                 precioUnitario: unitPrice,
+                precioCosto: product.precioCosto || 0,
                 subtotal: subtotal
             });
 
@@ -1814,63 +1847,129 @@ app.get('/api/sales/general-stats', async (req, res) => {
         }
 
         const sales = await Sale.find(filter)
-            .populate('usuarioId', 'nombre apellido')
-            .populate('seller', 'nombre apellido');
+            .populate('usuarioId', 'nombre apellido username role');
+
+        const products = await Product.find({});
+        const productMap = {};
+        products.forEach(p => {
+            productMap[p._id.toString()] = p;
+            if (p.nombre) productMap[p.nombre.toLowerCase().trim()] = p;
+        });
 
         const statsBySeller = {};
-        let totalRevenue = 0;
-        let totalSalesCount = 0;
+        let totalRecaudado = 0;
+        let totalCosto = 0;
+        let totalGanancia = 0;
+        let totalUnidadesVendidas = 0;
+        let totalVentasCount = 0;
+
+        const productTotalsMap = {};
 
         sales.forEach(sale => {
-            const seller = sale.usuarioId || sale.seller;
+            const seller = sale.usuarioId;
+            const sellerId = seller ? (seller._id ? seller._id.toString() : 'unknown') : 'unknown';
             const sellerName = seller
-                ? `${seller.nombre || ''} ${seller.apellido || ''}`.trim() || 'Sin Nombre'
+                ? `${seller.nombre || ''} ${seller.apellido || ''}`.trim() || seller.username || 'Sin Nombre'
                 : 'Desconocido/Admin';
 
-            if (!statsBySeller[sellerName]) {
-                statsBySeller[sellerName] = {
-                    name: sellerName,
-                    salesCount: 0,
-                    revenue: 0,
-                    products: {}
+            if (!statsBySeller[sellerId]) {
+                statsBySeller[sellerId] = {
+                    usuarioId: sellerId,
+                    vendedorNombre: sellerName,
+                    ventasCount: 0,
+                    unidadesVendidas: 0,
+                    totalRecaudado: 0,
+                    totalCosto: 0,
+                    totalGanancia: 0,
+                    productos: {}
                 };
             }
 
-            statsBySeller[sellerName].salesCount += 1;
-            statsBySeller[sellerName].revenue += sale.total;
+            statsBySeller[sellerId].ventasCount += 1;
+            totalVentasCount += 1;
 
             if (sale.items && Array.isArray(sale.items)) {
                 sale.items.forEach(item => {
                     const pName = item.nombre || item.name || 'Producto Desconocido';
-                    if (!statsBySeller[sellerName].products[pName]) {
-                        statsBySeller[sellerName].products[pName] = { count: 0, revenue: 0 };
+                    const pId = item.productoId ? item.productoId.toString() : (item.product ? item.product.toString() : '');
+                    const matchedProd = productMap[pId] || productMap[pName.toLowerCase().trim()];
+
+                    const cant = Number(item.cantidad || item.quantity || 0);
+                    const unitPrice = Number(item.precioUnitario !== undefined ? item.precioUnitario : (item.price || 0));
+                    const unitCost = Number(item.precioCosto !== undefined ? item.precioCosto : (item.costo !== undefined ? item.costo : (matchedProd ? (matchedProd.precioCosto || matchedProd.costo || 0) : 0)));
+
+                    const itemRevenue = item.subtotal !== undefined ? Number(item.subtotal) : (unitPrice * cant);
+                    const itemCost = unitCost * cant;
+                    const itemProfit = itemRevenue - itemCost;
+
+                    statsBySeller[sellerId].unidadesVendidas += cant;
+                    statsBySeller[sellerId].totalRecaudado += itemRevenue;
+                    statsBySeller[sellerId].totalCosto += itemCost;
+                    statsBySeller[sellerId].totalGanancia += itemProfit;
+
+                    totalUnidadesVendidas += cant;
+                    totalRecaudado += itemRevenue;
+                    totalCosto += itemCost;
+                    totalGanancia += itemProfit;
+
+                    // Breakdown for seller
+                    if (!statsBySeller[sellerId].productos[pName]) {
+                        statsBySeller[sellerId].productos[pName] = {
+                            nombre: pName,
+                            cantidad: 0,
+                            precioUnitario: unitPrice,
+                            precioCosto: unitCost,
+                            total: 0,
+                            costoTotal: 0,
+                            ganancia: 0
+                        };
                     }
-                    const cant = item.cantidad || item.quantity || 0;
-                    const price = item.precioUnitario || item.price || 0;
-                    statsBySeller[sellerName].products[pName].count += cant;
-                    statsBySeller[sellerName].products[pName].revenue += (price * cant);
+                    statsBySeller[sellerId].productos[pName].cantidad += cant;
+                    statsBySeller[sellerId].productos[pName].total += itemRevenue;
+                    statsBySeller[sellerId].productos[pName].costoTotal += itemCost;
+                    statsBySeller[sellerId].productos[pName].ganancia += itemProfit;
+
+                    // Global product totals
+                    if (!productTotalsMap[pName]) {
+                        productTotalsMap[pName] = {
+                            nombre: pName,
+                            cantidad: 0,
+                            precioUnitario: unitPrice,
+                            precioCosto: unitCost,
+                            total: 0,
+                            costoTotal: 0,
+                            ganancia: 0
+                        };
+                    }
+                    productTotalsMap[pName].cantidad += cant;
+                    productTotalsMap[pName].total += itemRevenue;
+                    productTotalsMap[pName].costoTotal += itemCost;
+                    productTotalsMap[pName].ganancia += itemProfit;
                 });
             }
-
-            totalSalesCount += 1;
-            totalRevenue += sale.total;
         });
 
-        const breakdown = Object.values(statsBySeller).map(seller => ({
+        const porVendedor = Object.values(statsBySeller).map(seller => ({
             ...seller,
-            products: Object.entries(seller.products).map(([name, stats]) => ({
-                name,
-                quantity: stats.count,
-                revenue: stats.revenue
-            })).sort((a, b) => b.revenue - a.revenue)
-        })).sort((a, b) => b.revenue - a.revenue);
+            productos: Object.values(seller.productos).sort((a, b) => b.total - a.total)
+        })).sort((a, b) => b.totalRecaudado - a.totalRecaudado);
+
+        const productosTotales = Object.values(productTotalsMap).sort((a, b) => b.total - a.total);
+
+        const margenGananciaPorcentaje = totalRecaudado > 0 ? Number(((totalGanancia / totalRecaudado) * 100).toFixed(1)) : 0;
 
         res.json({
-            totalRevenue,
-            totalSalesCount,
-            breakdown
+            totalRecaudado,
+            totalCosto,
+            totalGanancia,
+            margenGananciaPorcentaje,
+            totalUnidadesVendidas,
+            totalVentasCount,
+            porVendedor,
+            productosTotales
         });
     } catch (err) {
+        console.error("Error in /api/sales/general-stats:", err);
         res.status(500).json({ error: err.message });
     }
 });

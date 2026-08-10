@@ -144,6 +144,25 @@ function handleLogout() {
 }
 
 // --- Product Management ---
+function addIngredienteCosto() {
+  if (!Array.isArray(productForm.value.ingredientesCosto)) {
+    productForm.value.ingredientesCosto = []
+  }
+  productForm.value.ingredientesCosto.push({ nombre: "", costo: "" })
+}
+
+function removeIngredienteCosto(index) {
+  if (Array.isArray(productForm.value.ingredientesCosto)) {
+    productForm.value.ingredientesCosto.splice(index, 1)
+  }
+}
+
+const costoTotalRecetaCalculado = computed(() => {
+  if (productForm.value.tipoProducto !== 'RECETA') return Number(productForm.value.precioCosto || 0)
+  if (!Array.isArray(productForm.value.ingredientesCosto)) return 0
+  return productForm.value.ingredientesCosto.reduce((sum, item) => sum + (Number(item.costo) || 0), 0)
+})
+
 function openCreateModal() {
   isEditing.value = false
   productForm.value = {
@@ -151,8 +170,10 @@ function openCreateModal() {
     nombre: "",
     codigoBarras: "",
     descripcion: "",
-    precioVenta: 0,
+    precioVenta: "",
     precioCosto: 0,
+    tipoProducto: "SIMPLE",
+    ingredientesCosto: [{ nombre: "", costo: "" }],
     stockActual: 0,
     activo: true
   }
@@ -161,6 +182,10 @@ function openCreateModal() {
 
 function openEditModal(product) {
   isEditing.value = true
+  const ingreds = Array.isArray(product.ingredientesCosto)
+    ? product.ingredientesCosto.map(i => ({ nombre: i.nombre || "", costo: i.costo !== undefined ? i.costo : "" }))
+    : []
+
   productForm.value = {
     id: product._id,
     nombre: product.nombre || product.name,
@@ -168,6 +193,8 @@ function openEditModal(product) {
     descripcion: product.descripcion || "",
     precioVenta: product.precioVenta !== undefined ? product.precioVenta : (product.price || 0),
     precioCosto: product.precioCosto !== undefined ? product.precioCosto : 0,
+    tipoProducto: product.tipoProducto || (ingreds.length > 0 ? "RECETA" : "SIMPLE"),
+    ingredientesCosto: ingreds.length > 0 ? ingreds : [{ nombre: "", costo: "" }],
     stockActual: product.stockActual !== undefined ? product.stockActual : (product.stock || 0),
     activo: product.activo !== undefined ? product.activo : true
   }
@@ -180,11 +207,35 @@ async function saveProduct() {
       alert("El nombre del producto es obligatorio.")
       return
     }
+
+    let cleanIngredientes = []
+    let finalPrecioCosto = Number(productForm.value.precioCosto || 0)
+
+    if (productForm.value.tipoProducto === 'RECETA') {
+      cleanIngredientes = (productForm.value.ingredientesCosto || [])
+        .filter(item => item && item.nombre && item.nombre.trim() !== '')
+        .map(item => ({
+          nombre: item.nombre.trim(),
+          costo: Number(item.costo) || 0
+        }))
+
+      if (cleanIngredientes.length === 0) {
+        alert("Para un producto de tipo Receta, ingresá al menos un subproducto con nombre y costo.")
+        return
+      }
+
+      finalPrecioCosto = cleanIngredientes.reduce((sum, item) => sum + item.costo, 0)
+    }
+
     const payload = {
       ...productForm.value,
       nombre: productForm.value.nombre.trim(),
-      codigoBarras: productForm.value.codigoBarras?.trim() || null
+      codigoBarras: productForm.value.codigoBarras?.trim() || null,
+      precioCosto: finalPrecioCosto,
+      tipoProducto: productForm.value.tipoProducto,
+      ingredientesCosto: cleanIngredientes
     }
+
     if (isEditing.value) {
       await MongoService.updateProduct(productForm.value.id, payload, currentUser.value)
     } else {
@@ -499,8 +550,14 @@ function formatPrice(value) {
                 <code>{{ product.codigoBarras || product.barcode || '-' }}</code>
               </td>
               <td>
-                <div class="product-name">{{ product.nombre || product.name }}</div>
-                <div class="product-desc" v-if="product.descripcion">{{ product.descripcion }}</div>
+                <div class="product-name">
+                  {{ product.nombre || product.name }}
+                  <span v-if="product.tipoProducto === 'RECETA'" class="recipe-badge-small" title="Producto tipo receta con subproductos de costo">🍳 Receta</span>
+                </div>
+                <div class="product-desc recipe-subproducts-desc" v-if="product.tipoProducto === 'RECETA' && product.ingredientesCosto && product.ingredientesCosto.length > 0">
+                  Subproductos (Costo: <strong>{{ formatPrice(product.precioCosto) }}</strong>): {{ product.ingredientesCosto.map(i => `${i.nombre} ($${i.costo})`).join(', ') }}
+                </div>
+                <div class="product-desc" v-else-if="product.descripcion">{{ product.descripcion }}</div>
               </td>
               <td class="price-cell">
                 {{ formatPrice(product.precioVenta !== undefined ? product.precioVenta : product.price) }}
@@ -551,8 +608,22 @@ function formatPrice(value) {
         </div>
         <form @submit.prevent="saveProduct" class="modal-form">
           <div class="form-group">
+            <label>Tipo de Producto *</label>
+            <div class="product-type-selector">
+              <label class="type-option" :class="{ active: productForm.tipoProducto === 'SIMPLE' }">
+                <input type="radio" v-model="productForm.tipoProducto" value="SIMPLE" />
+                📦 Producto Simple
+              </label>
+              <label class="type-option" :class="{ active: productForm.tipoProducto === 'RECETA' }">
+                <input type="radio" v-model="productForm.tipoProducto" value="RECETA" />
+                🍳 Producto Receta (Subproductos)
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
             <label>Nombre del Producto *</label>
-            <input v-model="productForm.nombre" required placeholder="Ej. Proteína Whey 1kg" />
+            <input v-model="productForm.nombre" required placeholder="Ej. Proteína Whey 1kg o Tarta de Almendras" />
           </div>
 
           <div class="form-group">
@@ -566,14 +637,60 @@ function formatPrice(value) {
           </div>
 
           <div class="form-group row">
-            <div class="col">
+            <div class="col" v-if="productForm.tipoProducto === 'SIMPLE'">
               <label>Precio Costo ($) <span class="optional-label">(Opcional)</span></label>
               <input type="number" step="0.01" v-model="productForm.precioCosto" min="0" placeholder="0" />
             </div>
-            <div class="col">
+            <div class="col" :class="{ 'col-full': productForm.tipoProducto === 'RECETA' }">
               <label>Precio Venta ($) *</label>
-              <input type="number" step="0.01" v-model="productForm.precioVenta" required min="0" />
+              <input type="number" step="0.01" v-model="productForm.precioVenta" required min="0" placeholder="Ej. 2500" />
             </div>
+          </div>
+
+          <!-- SUBPRODUCTOS / INGREDIENTES PARA RECETAS -->
+          <div v-if="productForm.tipoProducto === 'RECETA'" class="recipe-container">
+            <div class="recipe-header">
+              <label>🍳 Subproductos / Ingredientes de Costo *</label>
+              <span class="recipe-badge">Costo Total: {{ formatPrice(costoTotalRecetaCalculado) }}</span>
+            </div>
+            <p class="recipe-help-text">Ingresá los subproductos de costo que componen esta receta. Si aumentan los precios, editalos aquí y el costo total se actualizará automáticamente.</p>
+            
+            <div class="recipe-items-list">
+              <div v-for="(ing, idx) in productForm.ingredientesCosto" :key="idx" class="recipe-item-row">
+                <input 
+                  type="text" 
+                  v-model="ing.nombre" 
+                  placeholder="Ej. Harina / Almendras" 
+                  class="recipe-input-name"
+                  required
+                />
+                <div class="recipe-input-cost-wrapper">
+                  <span class="currency-symbol">$</span>
+                  <input 
+                    type="number" 
+                    step="0.01" 
+                    min="0" 
+                    v-model="ing.costo" 
+                    placeholder="700" 
+                    class="recipe-input-cost"
+                    required
+                  />
+                </div>
+                <button 
+                  type="button" 
+                  @click="removeIngredienteCosto(idx)" 
+                  class="remove-ingredient-btn"
+                  title="Eliminar ingrediente"
+                  :disabled="productForm.ingredientesCosto.length <= 1"
+                >
+                  🗑️
+                </button>
+              </div>
+            </div>
+
+            <button type="button" @click="addIngredienteCosto" class="add-ingredient-btn">
+              ➕ Agregar Subproducto
+            </button>
           </div>
 
           <div class="form-group">
@@ -814,59 +931,123 @@ function formatPrice(value) {
         <div v-if="isLoadingStats" class="loading">Cargando estadísticas...</div>
         
         <div v-else-if="generalStats" class="stats-body">
-          <div class="total-sold-card">
-            <h3>Recaudación Total de Productos</h3>
-            <p class="big-number">{{ formatPrice(generalStats.totalRecaudado) }}</p>
-            <p class="small-text">Total Unidades Vendidas: <strong>{{ generalStats.totalUnidadesVendidas }} un.</strong></p>
+          <!-- Tarjetas de Resumen Financiero -->
+          <div class="stats-cards-grid">
+            <div class="stats-card card-recaudacion">
+              <span class="card-icon">💰</span>
+              <div class="card-content">
+                <h3>Ventas Brutas</h3>
+                <p class="big-number text-green">{{ formatPrice(generalStats.totalRecaudado) }}</p>
+                <p class="small-text">{{ generalStats.totalUnidadesVendidas }} unidades vendidas ({{ generalStats.totalVentasCount }} operaciones)</p>
+              </div>
+            </div>
+
+            <div class="stats-card card-costo">
+              <span class="card-icon">📦</span>
+              <div class="card-content">
+                <h3>Costo de Reposición</h3>
+                <p class="big-number text-orange">{{ formatPrice(generalStats.totalCosto) }}</p>
+                <p class="small-text">Costo total acumulado de mercadería</p>
+              </div>
+            </div>
+
+            <div class="stats-card card-ganancia">
+              <span class="card-icon">📈</span>
+              <div class="card-content">
+                <h3>Ganancia Neta</h3>
+                <p class="big-number text-gold">{{ formatPrice(generalStats.totalGanancia) }}</p>
+                <p class="small-text">Margen Neto: <strong>{{ generalStats.margenGananciaPorcentaje }}%</strong></p>
+              </div>
+            </div>
           </div>
 
-          <h3>Ventas por Vendedor</h3>
-          <div class="table-scroll-container">
-            <table class="history-table">
-              <thead>
-                <tr>
-                  <th>Vendedor</th>
-                  <th>Unidades</th>
-                  <th>Total Recaudado</th>
-                </tr>
-              </thead>
-              <tbody>
-                <template v-for="seller in generalStats.porVendedor" :key="seller.usuarioId">
+          <!-- Desglose por Vendedor -->
+          <div class="stats-section">
+            <h3 class="section-title">👥 Desglose por Vendedor</h3>
+            <div class="table-scroll-container">
+              <table class="history-table">
+                <thead>
                   <tr>
-                    <td>
-                      <button @click="toggleSeller(seller.vendedorNombre)" class="expand-button">
-                        {{ expandedSellers.includes(seller.vendedorNombre) ? '▼' : '▶' }}
-                      </button>
-                      {{ seller.vendedorNombre }}
-                    </td>
-                    <td>{{ seller.unidadesVendidas }} un.</td>
-                    <td><strong>{{ formatPrice(seller.totalRecaudado) }}</strong></td>
+                    <th>Vendedor</th>
+                    <th>Unidades</th>
+                    <th>Ventas Brutas</th>
+                    <th>Costo Reposición</th>
+                    <th>Ganancia Neta</th>
                   </tr>
-                  <tr v-if="expandedSellers.includes(seller.vendedorNombre)" class="details-row">
-                    <td colspan="3">
-                      <div class="product-details-container">
-                        <table class="details-table">
-                          <thead>
-                            <tr>
-                              <th>Producto</th>
-                              <th>Unidades</th>
-                              <th>Subtotal</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <tr v-for="prod in seller.productos" :key="prod.nombre">
-                              <td>{{ prod.nombre }}</td>
-                              <td>{{ prod.cantidad }} un.</td>
-                              <td>{{ formatPrice(prod.total) }}</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </td>
+                </thead>
+                <tbody>
+                  <template v-for="seller in generalStats.porVendedor" :key="seller.usuarioId">
+                    <tr>
+                      <td>
+                        <button @click="toggleSeller(seller.vendedorNombre)" class="expand-button">
+                          {{ expandedSellers.includes(seller.vendedorNombre) ? '▼' : '▶' }}
+                        </button>
+                        <strong>{{ seller.vendedorNombre }}</strong>
+                      </td>
+                      <td>{{ seller.unidadesVendidas }} un.</td>
+                      <td>{{ formatPrice(seller.totalRecaudado) }}</td>
+                      <td class="text-orange">{{ formatPrice(seller.totalCosto) }}</td>
+                      <td class="text-gold font-bold">{{ formatPrice(seller.totalGanancia) }}</td>
+                    </tr>
+                    <tr v-if="expandedSellers.includes(seller.vendedorNombre)" class="details-row">
+                      <td colspan="5">
+                        <div class="product-details-container">
+                          <table class="details-table">
+                            <thead>
+                              <tr>
+                                <th>Producto</th>
+                                <th>Unidades</th>
+                                <th>Precio Unit.</th>
+                                <th>Costo Unit.</th>
+                                <th>Subtotal Venta</th>
+                                <th>Ganancia Neta</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr v-for="prod in seller.productos" :key="prod.nombre">
+                                <td><strong>{{ prod.nombre }}</strong></td>
+                                <td>{{ prod.cantidad }} un.</td>
+                                <td>{{ formatPrice(prod.precioUnitario) }}</td>
+                                <td>{{ formatPrice(prod.precioCosto) }}</td>
+                                <td>{{ formatPrice(prod.total) }}</td>
+                                <td class="text-gold font-bold">{{ formatPrice(prod.ganancia) }}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Ránking Global de Productos -->
+          <div class="stats-section" v-if="generalStats.productosTotales && generalStats.productosTotales.length > 0">
+            <h3 class="section-title">🛍️ Ránking de Productos Vendidos</h3>
+            <div class="table-scroll-container">
+              <table class="history-table">
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th>Unidades Vendidas</th>
+                    <th>Ventas Brutas</th>
+                    <th>Costo Reposición</th>
+                    <th>Ganancia Neta</th>
                   </tr>
-                </template>
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  <tr v-for="p in generalStats.productosTotales" :key="p.nombre">
+                    <td><strong>{{ p.nombre }}</strong></td>
+                    <td>{{ p.cantidad }} un.</td>
+                    <td>{{ formatPrice(p.total) }}</td>
+                    <td class="text-orange">{{ formatPrice(p.costoTotal) }}</td>
+                    <td class="text-gold font-bold">{{ formatPrice(p.ganancia) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
@@ -1556,6 +1737,224 @@ function formatPrice(value) {
   border-bottom: 1px solid rgba(255,255,255,0.05);
   padding: 4px;
   color: var(--text-color);
+}
+
+.stats-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.stats-card {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.card-recaudacion {
+  border-left: 4px solid #10b981;
+}
+
+.card-costo {
+  border-left: 4px solid #f97316;
+}
+
+.card-ganancia {
+  border-left: 4px solid #eab308;
+  background: rgba(234, 179, 8, 0.05);
+}
+
+.card-icon {
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.card-content h3 {
+  margin: 0 0 4px 0;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--subtitle-text);
+}
+
+.text-green { color: #10b981 !important; }
+.text-orange { color: #f97316 !important; }
+.text-gold { color: #eab308 !important; }
+.font-bold { font-weight: 700; }
+
+.stats-section {
+  margin-top: 24px;
+}
+
+.section-title {
+  margin: 0 0 12px 0;
+  font-size: 1.05rem;
+  color: var(--header-text);
+  border-bottom: 1px solid var(--input-border);
+  padding-bottom: 6px;
+}
+
+.product-type-selector {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.type-option {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--input-bg);
+  border: 2px solid var(--input-border);
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-color);
+  transition: all 0.2s;
+}
+
+.type-option.active {
+  border-color: var(--potenza-yellow);
+  background: rgba(255, 215, 0, 0.08);
+  color: var(--header-text);
+}
+
+.col-full {
+  flex: 1 1 100% !important;
+}
+
+.recipe-container {
+  background: var(--input-bg);
+  border: 1px solid var(--potenza-yellow);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.recipe-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.recipe-header label {
+  margin: 0;
+  color: var(--header-text);
+  font-weight: 700;
+}
+
+.recipe-badge {
+  background: rgba(255, 215, 0, 0.15);
+  color: var(--potenza-yellow);
+  border: 1px solid var(--potenza-yellow);
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.recipe-badge-small {
+  display: inline-block;
+  background: rgba(255, 215, 0, 0.15);
+  color: var(--potenza-yellow);
+  border: 1px solid var(--potenza-yellow);
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  margin-left: 6px;
+}
+
+.recipe-help-text {
+  font-size: 0.85rem;
+  color: var(--subtitle-text);
+  margin: 0 0 12px 0;
+  line-height: 1.35;
+}
+
+.recipe-items-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.recipe-item-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.recipe-input-name {
+  flex: 2;
+}
+
+.recipe-input-cost-wrapper {
+  flex: 1.2;
+  display: flex;
+  align-items: center;
+  background: var(--card-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  padding-left: 8px;
+}
+
+.currency-symbol {
+  color: var(--subtitle-text);
+  font-weight: 700;
+}
+
+.recipe-input-cost-wrapper input {
+  border: none !important;
+  background: transparent !important;
+  padding-left: 4px !important;
+  width: 100%;
+}
+
+.remove-ingredient-btn {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #ef4444;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.remove-ingredient-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.add-ingredient-btn {
+  background: var(--card-bg);
+  color: var(--potenza-yellow);
+  border: 1px dashed var(--potenza-yellow);
+  padding: 10px;
+  border-radius: 8px;
+  width: 100%;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.add-ingredient-btn:hover {
+  background: rgba(255, 215, 0, 0.1);
+}
+
+.recipe-subproducts-desc {
+  color: var(--potenza-yellow) !important;
+  font-size: 0.82rem;
+  margin-top: 2px;
 }
 
 @media (max-width: 768px) {
