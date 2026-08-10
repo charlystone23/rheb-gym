@@ -347,27 +347,45 @@ function getUltimoPagoHastaPeriodo(alumno, referenceDate = new Date()) {
     })[0] || null
 }
 
+function getProximaFechaPago(alumno, referenceDate = new Date()) {
+  const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
+  const hoy = new Date(referenceDate)
+  hoy.setHours(0, 0, 0, 0)
+
+  if (!ultimoPago) {
+    const fechaInicio = new Date(alumno.fechaRegistro || alumno.createdAt || hoy)
+    fechaInicio.setHours(0, 0, 0, 0)
+    return fechaInicio
+  }
+
+  const proximaFecha = new Date(ultimoPago.fecha)
+  proximaFecha.setDate(proximaFecha.getDate() + 30)
+  proximaFecha.setHours(0, 0, 0, 0)
+  return proximaFecha
+}
+
+function getDaysUntilPayment(alumno, referenceDate = new Date()) {
+  const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
+  if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno))) {
+    return null
+  }
+
+  const hoy = new Date(referenceDate)
+  hoy.setHours(0, 0, 0, 0)
+
+  const proximaFecha = getProximaFechaPago(alumno, referenceDate)
+  const dias = Math.ceil((proximaFecha - hoy) / (1000 * 60 * 60 * 24))
+  return dias
+}
+
 function getPaymentStatus(alumno, referenceDate = new Date()) {
   const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
   if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno))) {
     return "red"
   }
 
-  const hoy = new Date(referenceDate)
-  hoy.setHours(0, 0, 0, 0)
-  
-  let proximaFechaPago = new Date()
-  if (!ultimoPago) {
-    proximaFechaPago = new Date(alumno.fechaRegistro || alumno.createdAt || hoy)
-  } else {
-    const periodo = getPagoPeriodoInfo(ultimoPago)
-    proximaFechaPago = periodo?.date ? new Date(periodo.date.getFullYear(), periodo.date.getMonth() + 1, 1) : new Date(ultimoPago.fecha)
-  }
-  proximaFechaPago.setHours(0, 0, 0, 0)
-  
-  const diasHastaPago = Math.ceil((proximaFechaPago - hoy) / (1000 * 60 * 60 * 24))
-  
-  if (diasHastaPago < 0) {
+  const diasHastaPago = getDaysUntilPayment(alumno, referenceDate)
+  if (diasHastaPago === null || diasHastaPago < 0) {
     return "red"
   } else if (diasHastaPago <= 5) {
     return "yellow"
@@ -385,44 +403,12 @@ function formatNextPaymentDate(alumno) {
   if (!ultimoPago) return "Sin pago"
   if (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle)) return "Promesa pendiente"
   if (hasPendingPartialPayment(alumno)) return "Pago parcial pendiente"
-  
-  const periodo = getPagoPeriodoInfo(ultimoPago)
-  if (periodo?.date) {
-    const proximaFecha = new Date(periodo.date.getFullYear(), periodo.date.getMonth() + 1, 1)
-    const dia = String(proximaFecha.getDate()).padStart(2, '0')
-    const mes = String(proximaFecha.getMonth() + 1).padStart(2, '0')
-    const año = proximaFecha.getFullYear()
-    return `${dia}/${mes}/${año}`
-  }
-  const fechaPago = new Date(ultimoPago.fecha)
-  const proximaFecha = new Date(fechaPago)
-  proximaFecha.setDate(proximaFecha.getDate() + 30)
+
+  const proximaFecha = getProximaFechaPago(alumno)
   const dia = String(proximaFecha.getDate()).padStart(2, '0')
   const mes = String(proximaFecha.getMonth() + 1).padStart(2, '0')
   const año = proximaFecha.getFullYear()
   return `${dia}/${mes}/${año}`
-}
-
-function getDaysUntilPayment(alumno) {
-  const ultimoPago = getUltimoPago(alumno)
-  if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno))) {
-    return null
-  }
-
-  const hoy = new Date()
-  hoy.setHours(0, 0, 0, 0)
-  
-  let proximaFecha = new Date()
-  if (!ultimoPago) {
-    proximaFecha = new Date(alumno.fechaRegistro || alumno.createdAt || hoy)
-  } else {
-    proximaFecha = new Date(ultimoPago.fecha)
-    proximaFecha.setDate(proximaFecha.getDate() + 30)
-  }
-  proximaFecha.setHours(0, 0, 0, 0)
-  
-  const dias = Math.ceil((proximaFecha - hoy) / (1000 * 60 * 60 * 24))
-  return dias
 }
 
 function goBack() {
