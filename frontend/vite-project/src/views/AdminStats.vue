@@ -517,9 +517,9 @@ async function exportToExcel() {
           "Alumno": `${alumno.nombre} ${alumno.apellido}`,
           "Entrenador (A quién pertenece)": `${entrenador.nombre} ${entrenador.apellido || ''}`.trim(),
           "Membresía": membershipSnapshot?.nombre || 'Ninguna',
-          "Precio Membresía": `$ ${(membershipSnapshot?.precio || 0).toLocaleString('es-AR')}`,
+          "Precio Membresía": Number(membershipSnapshot?.precio || 0),
           "Estado de Pago del Mes": estadoPagoText,
-          "Monto Abonado": `$ ${(totalAbonado || 0).toLocaleString('es-AR')}`,
+          "Monto Abonado": Number(totalAbonado || 0),
           "Detalle de Pagos": detallePagos || 'Sin pagos en este mes'
         })
       })
@@ -534,10 +534,10 @@ async function exportToExcel() {
       resumenRows.push({ "Concepto": "Alumnos A Vencer", "Valor": statsGenerales.value.proximoVencer })
       resumenRows.push({ "Concepto": "Alumnos Morosos", "Valor": statsGenerales.value.deuda })
       resumenRows.push({ "Concepto": "% Alumnos Al Día/A Vencer", "Valor": `${statsGenerales.value.porcentajeActivos}%` })
-      resumenRows.push({ "Concepto": "Recaudación Real del Mes", "Valor": `$ ${(statsGenerales.value.montoRealMes || 0).toLocaleString('es-AR')}` })
-      resumenRows.push({ "Concepto": "Recaudación Estimada (Fin de Mes)", "Valor": `$ ${(statsGenerales.value.montoEstimadoMes || 0).toLocaleString('es-AR')}` })
-      resumenRows.push({ "Concepto": "Gastos Totales del Mes", "Valor": `$ ${(statsGenerales.value.gastosMes || 0).toLocaleString('es-AR')}` })
-      resumenRows.push({ "Concepto": "Recaudación Neta", "Valor": `$ ${(statsGenerales.value.recaudacionNeta || 0).toLocaleString('es-AR')}` })
+      resumenRows.push({ "Concepto": "Recaudación Real del Mes", "Valor": Number(statsGenerales.value.montoRealMes || 0) })
+      resumenRows.push({ "Concepto": "Recaudación Estimada (Fin de Mes)", "Valor": Number(statsGenerales.value.montoEstimadoMes || 0) })
+      resumenRows.push({ "Concepto": "Gastos Totales del Mes", "Valor": Number(statsGenerales.value.gastosMes || 0) })
+      resumenRows.push({ "Concepto": "Recaudación Neta", "Valor": Number(statsGenerales.value.recaudacionNeta || 0) })
     }
 
     // Add list of expenses in Resumen tab as well
@@ -547,7 +547,7 @@ async function exportToExcel() {
         gastosRows.push({
           "Fecha Gasto": formatDateAR(expense.fecha),
           "Detalle Gasto": expense.detalle,
-          "Monto Gasto": `$ ${(Number(expense.monto || 0)).toLocaleString('es-AR')}`
+          "Monto Gasto": Number(expense.monto || 0)
         })
       })
     }
@@ -557,12 +557,34 @@ async function exportToExcel() {
     
     // Sheet 1: Alumnos
     const wsAlumnos = XLSX.utils.json_to_sheet(alumnosRows)
+
+    // Set number formatting for currency columns in Alumnos sheet
+    if (wsAlumnos['!ref']) {
+      const range = XLSX.utils.decode_range(wsAlumnos['!ref'])
+      for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+        // Col D (col index 3): Precio Membresía
+        const cellD = wsAlumnos[XLSX.utils.encode_cell({ r: R, c: 3 })]
+        if (cellD && typeof cellD.v === 'number') {
+          cellD.t = 'n'
+          cellD.z = '"$" #,##0'
+        }
+        // Col F (col index 5): Monto Abonado
+        const cellF = wsAlumnos[XLSX.utils.encode_cell({ r: R, c: 5 })]
+        if (cellF && typeof cellF.v === 'number') {
+          cellF.t = 'n'
+          cellF.z = '"$" #,##0'
+        }
+      }
+    }
     
     // Auto-adjust column widths for Alumnos sheet to make it look premium
     const maxLens = {}
     alumnosRows.forEach(row => {
       Object.keys(row).forEach(key => {
-        const valStr = String(row[key] || '')
+        let valStr = String(row[key] || '')
+        if (key === "Precio Membresía" || key === "Monto Abonado") {
+          valStr = `$ ${(Number(row[key]) || 0).toLocaleString('es-AR')}`
+        }
         maxLens[key] = Math.max(maxLens[key] || key.length, valStr.length)
       })
     })
@@ -572,12 +594,33 @@ async function exportToExcel() {
 
     // Sheet 2: Resumen Financiero
     const wsResumen = XLSX.utils.json_to_sheet(resumenRows)
+    if (wsResumen['!ref']) {
+      const range = XLSX.utils.decode_range(wsResumen['!ref'])
+      for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+        const cellVal = wsResumen[XLSX.utils.encode_cell({ r: R, c: 1 })]
+        const cellConcepto = wsResumen[XLSX.utils.encode_cell({ r: R, c: 0 })]
+        if (cellVal && typeof cellVal.v === 'number' && cellConcepto && (String(cellConcepto.v).includes('Recaudación') || String(cellConcepto.v).includes('Gastos'))) {
+          cellVal.t = 'n'
+          cellVal.z = '"$" #,##0'
+        }
+      }
+    }
     wsResumen['!cols'] = [{ wch: 35 }, { wch: 20 }]
     XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen del Mes")
 
     // Add Expenses to Sheet 3
     if (gastosRows.length > 0) {
       const wsGastos = XLSX.utils.json_to_sheet(gastosRows)
+      if (wsGastos['!ref']) {
+        const range = XLSX.utils.decode_range(wsGastos['!ref'])
+        for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+          const cellMonto = wsGastos[XLSX.utils.encode_cell({ r: R, c: 2 })]
+          if (cellMonto && typeof cellMonto.v === 'number') {
+            cellMonto.t = 'n'
+            cellMonto.z = '"$" #,##0'
+          }
+        }
+      }
       wsGastos['!cols'] = [{ wch: 15 }, { wch: 45 }, { wch: 15 }]
       XLSX.utils.book_append_sheet(wb, wsGastos, "Gastos del Mes")
     }
