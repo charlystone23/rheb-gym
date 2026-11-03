@@ -347,6 +347,43 @@ function getUltimoPagoHastaPeriodo(alumno, referenceDate = new Date()) {
     })[0] || null
 }
 
+const NOMBRES_MESES = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+]
+
+function formatPromoPeriodo(promo) {
+  if (!promo) return ""
+  let mInicio = promo.mesInicio
+  let aInicio = promo.anioInicio
+  let mFin = promo.mesFin
+  let aFin = promo.anioFin
+
+  if (!mInicio && promo.fechaInicio) {
+    const d = new Date(promo.fechaInicio)
+    mInicio = d.getMonth() + 1
+    aInicio = d.getFullYear()
+  }
+  if (!mFin && promo.fechaFin) {
+    const d = new Date(promo.fechaFin)
+    mFin = d.getMonth() + 1
+    aFin = d.getFullYear()
+  }
+
+  if (!mInicio || !aInicio) return ""
+
+  const nombreInicio = NOMBRES_MESES[mInicio - 1]
+  const nombreFin = mFin ? NOMBRES_MESES[mFin - 1] : nombreInicio
+
+  if (mInicio === mFin && aInicio === aFin) {
+    return `${nombreInicio} ${aInicio}`
+  }
+  if (aInicio === aFin) {
+    return `${nombreInicio} - ${nombreFin} ${aInicio}`
+  }
+  return `${nombreInicio} ${aInicio} - ${nombreFin} ${aFin}`
+}
+
 function findAlumnoById(alumnoId) {
   if (!alumnoId) return null
   const idStr = String(alumnoId._id || alumnoId.id || alumnoId)
@@ -355,8 +392,15 @@ function findAlumnoById(alumnoId) {
 
 function isPromo2x1Activa(alumno, referenceDate = new Date()) {
   if (!alumno?.promo2x1?.activo) return false
-  if (!alumno.promo2x1.fechaInicio || !alumno.promo2x1.fechaFin) return false
   const ref = new Date(referenceDate)
+
+  if (alumno.promo2x1.mesFin && alumno.promo2x1.anioFin) {
+    const refTotal = ref.getFullYear() * 12 + (ref.getMonth() + 1)
+    const endTotal = Number(alumno.promo2x1.anioFin) * 12 + Number(alumno.promo2x1.mesFin)
+    return refTotal <= endTotal
+  }
+
+  if (!alumno.promo2x1.fechaFin) return false
   const fin = new Date(alumno.promo2x1.fechaFin)
   fin.setHours(23, 59, 59, 999)
   return ref <= fin
@@ -453,7 +497,7 @@ function formatDate(date) {
 
 function formatNextPaymentDate(alumno) {
   if (isPromo2x1AnexadoActiva(alumno)) {
-    return `Cubierto 2x1 (hasta ${formatDate(alumno.promo2x1.fechaFin)})`
+    return `Cubierto 2x1 (${formatPromoPeriodo(alumno.promo2x1)})`
   }
 
   const ultimoPago = getUltimoPagoHastaPeriodo(alumno)
@@ -1069,22 +1113,22 @@ async function confirmarDelegacion() {
                   v-if="alumno.promo2x1?.activo && isPromo2x1Activa(alumno)"
                   class="promo-badge"
                   :class="alumno.promo2x1.rol"
-                  :title="`Promo 2x1 activa hasta el ${formatDate(alumno.promo2x1.fechaFin)}`"
+                  :title="`Promo 2x1: ${formatPromoPeriodo(alumno.promo2x1)}`"
                 >
-                  🏷️ 2x1 {{ alumno.promo2x1.rol === 'titular' ? 'Titular' : 'Anexado' }} (con {{ getNombreVinculado(alumno) }})
+                  🏷️ 2x1 {{ alumno.promo2x1.rol === 'titular' ? 'Titular' : 'Anexado' }} ({{ formatPromoPeriodo(alumno.promo2x1) }})
                 </span>
                 <span
                   v-else-if="alumno.promo2x1?.activo && !isPromo2x1Activa(alumno)"
                   class="promo-badge expired"
-                  :title="`Promo 2x1 vencida el ${formatDate(alumno.promo2x1.fechaFin)}`"
+                  :title="`Promo 2x1 vencida: ${formatPromoPeriodo(alumno.promo2x1)}`"
                 >
-                  ⚠️ 2x1 Vencido (con {{ getNombreVinculado(alumno) }})
+                  ⚠️ 2x1 Vencido ({{ formatPromoPeriodo(alumno.promo2x1) }})
                 </span>
               </h3>
             </div>
             <div class="alumno-payment">
               <p v-if="isPromo2x1AnexadoActiva(alumno)" class="promo-covered-info">
-                ✨ Cubierto por membresía 2x1 de <strong>{{ getNombreVinculado(alumno) }}</strong> hasta el {{ formatDate(alumno.promo2x1.fechaFin) }}
+                ✨ Cubierto por membresía 2x1 de <strong>{{ getNombreVinculado(alumno) }}</strong> ({{ formatPromoPeriodo(alumno.promo2x1) }})
               </p>
               <p class="payment-label">Último pago:</p>
               <p class="payment-date" v-if="getUltimoPago(alumno)">

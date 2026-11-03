@@ -264,10 +264,54 @@ function findAlumnoById(alumnoId) {
   return null
 }
 
+const NOMBRES_MESES = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+]
+
+function formatPromoPeriodo(promo) {
+  if (!promo) return ""
+  let mInicio = promo.mesInicio
+  let aInicio = promo.anioInicio
+  let mFin = promo.mesFin
+  let aFin = promo.anioFin
+
+  if (!mInicio && promo.fechaInicio) {
+    const d = new Date(promo.fechaInicio)
+    mInicio = d.getMonth() + 1
+    aInicio = d.getFullYear()
+  }
+  if (!mFin && promo.fechaFin) {
+    const d = new Date(promo.fechaFin)
+    mFin = d.getMonth() + 1
+    aFin = d.getFullYear()
+  }
+
+  if (!mInicio || !aInicio) return ""
+
+  const nombreInicio = NOMBRES_MESES[mInicio - 1]
+  const nombreFin = mFin ? NOMBRES_MESES[mFin - 1] : nombreInicio
+
+  if (mInicio === mFin && aInicio === aFin) {
+    return `${nombreInicio} ${aInicio}`
+  }
+  if (aInicio === aFin) {
+    return `${nombreInicio} - ${nombreFin} ${aInicio}`
+  }
+  return `${nombreInicio} ${aInicio} - ${nombreFin} ${aFin}`
+}
+
 function isPromo2x1Activa(alumno, referenceDate = new Date()) {
   if (!alumno?.promo2x1?.activo) return false
-  if (!alumno.promo2x1.fechaInicio || !alumno.promo2x1.fechaFin) return false
   const ref = new Date(referenceDate)
+
+  if (alumno.promo2x1.mesFin && alumno.promo2x1.anioFin) {
+    const refTotal = ref.getFullYear() * 12 + (ref.getMonth() + 1)
+    const endTotal = Number(alumno.promo2x1.anioFin) * 12 + Number(alumno.promo2x1.mesFin)
+    return refTotal <= endTotal
+  }
+
+  if (!alumno.promo2x1.fechaFin) return false
   const fin = new Date(alumno.promo2x1.fechaFin)
   fin.setHours(23, 59, 59, 999)
   return ref <= fin
@@ -529,17 +573,42 @@ const isSavingPromo2x1 = ref(false)
 const promo2x1Error = ref("")
 const promo2x1Success = ref("")
 
+const currentMonthNumber = new Date().getMonth() + 1
+const currentYearNumber = new Date().getFullYear()
+
+const opcionesMeses = [
+  { val: 1, label: "Enero" },
+  { val: 2, label: "Febrero" },
+  { val: 3, label: "Marzo" },
+  { val: 4, label: "Abril" },
+  { val: 5, label: "Mayo" },
+  { val: 6, label: "Junio" },
+  { val: 7, label: "Julio" },
+  { val: 8, label: "Agosto" },
+  { val: 9, label: "Septiembre" },
+  { val: 10, label: "Octubre" },
+  { val: 11, label: "Noviembre" },
+  { val: 12, label: "Diciembre" }
+]
+
+const opcionesAnios = computed(() => {
+  const current = new Date().getFullYear()
+  return [current - 1, current, current + 1, current + 2]
+})
+
 const promo2x1Form = ref({
   alumnoAnexadoId: "",
   meses: 1,
-  fechaInicio: formatDateAR(new Date()),
+  mesInicio: currentMonthNumber,
+  anioInicio: currentYearNumber,
   searchFilter: ""
 })
 
 const promoRenovarForm = ref({
   meses: 1,
-  modoInicio: "fin_actual",
-  fechaInicio: formatDateAR(new Date())
+  modoInicio: "consecutivo",
+  mesInicio: currentMonthNumber,
+  anioInicio: currentYearNumber
 })
 
 const todosLosAlumnosActivos = computed(() => {
@@ -572,23 +641,55 @@ const alumnosFiltradosParaPromo = computed(() => {
   )
 })
 
-const fechaFinEstimadaPromo = computed(() => {
-  const d = parseDisplayDate(promo2x1Form.value.fechaInicio) || new Date()
-  const meses = Math.max(1, parseInt(promo2x1Form.value.meses, 10) || 1)
-  const fin = new Date(d.getFullYear(), d.getMonth() + meses, d.getDate())
-  return formatDateAR(fin)
+const periodoEstimadoPromo = computed(() => {
+  const m = Number(promo2x1Form.value.mesInicio) || currentMonthNumber
+  const a = Number(promo2x1Form.value.anioInicio) || currentYearNumber
+  const duracion = Math.max(1, parseInt(promo2x1Form.value.meses, 10) || 1)
+
+  const totalFin = (a * 12 + (m - 1)) + (duracion - 1)
+  const aFin = Math.floor(totalFin / 12)
+  const mFin = (totalFin % 12) + 1
+
+  const nombreInicio = NOMBRES_MESES[m - 1]
+  const nombreFin = NOMBRES_MESES[mFin - 1]
+
+  if (duracion === 1) {
+    return `${nombreInicio} ${a}`
+  }
+  if (a === aFin) {
+    return `${nombreInicio} a ${nombreFin} ${a}`
+  }
+  return `${nombreInicio} ${a} a ${nombreFin} ${aFin}`
 })
 
-const fechaFinEstimadaRenovacion = computed(() => {
-  let inicio = new Date()
-  if (promoRenovarForm.value.modoInicio === "fin_actual" && alumnoPromoSeleccionado.value?.promo2x1?.fechaFin) {
-    inicio = new Date(alumnoPromoSeleccionado.value.promo2x1.fechaFin)
-  } else if (promoRenovarForm.value.modoInicio === "otra_fecha") {
-    inicio = parseDisplayDate(promoRenovarForm.value.fechaInicio) || new Date()
+const periodoEstimadoRenovacion = computed(() => {
+  const duracion = Math.max(1, parseInt(promoRenovarForm.value.meses, 10) || 1)
+  let m = Number(promoRenovarForm.value.mesInicio) || currentMonthNumber
+  let a = Number(promoRenovarForm.value.anioInicio) || currentYearNumber
+
+  if (promoRenovarForm.value.modoInicio === "consecutivo") {
+    const curPromo = alumnoPromoSeleccionado.value?.promo2x1
+    if (curPromo?.mesFin && curPromo?.anioFin) {
+      const nextTotal = (Number(curPromo.anioFin) * 12 + (Number(curPromo.mesFin) - 1)) + 1
+      a = Math.floor(nextTotal / 12)
+      m = (nextTotal % 12) + 1
+    }
   }
-  const meses = Math.max(1, parseInt(promoRenovarForm.value.meses, 10) || 1)
-  const fin = new Date(inicio.getFullYear(), inicio.getMonth() + meses, inicio.getDate())
-  return formatDateAR(fin)
+
+  const totalFin = (a * 12 + (m - 1)) + (duracion - 1)
+  const aFin = Math.floor(totalFin / 12)
+  const mFin = (totalFin % 12) + 1
+
+  const nombreInicio = NOMBRES_MESES[m - 1]
+  const nombreFin = NOMBRES_MESES[mFin - 1]
+
+  if (duracion === 1) {
+    return `${nombreInicio} ${a}`
+  }
+  if (a === aFin) {
+    return `${nombreInicio} a ${nombreFin} ${a}`
+  }
+  return `${nombreInicio} ${a} a ${nombreFin} ${aFin}`
 })
 
 function openPromo2x1Modal(entrenador, alumno) {
@@ -596,16 +697,19 @@ function openPromo2x1Modal(entrenador, alumno) {
   alumnoPromoSeleccionado.value = alumno
   promo2x1Error.value = ""
   promo2x1Success.value = ""
+  const now = new Date()
   promo2x1Form.value = {
     alumnoAnexadoId: "",
     meses: 1,
-    fechaInicio: formatDateAR(new Date()),
+    mesInicio: now.getMonth() + 1,
+    anioInicio: now.getFullYear(),
     searchFilter: ""
   }
   promoRenovarForm.value = {
     meses: 1,
-    modoInicio: "fin_actual",
-    fechaInicio: formatDateAR(new Date())
+    modoInicio: "consecutivo",
+    mesInicio: now.getMonth() + 1,
+    anioInicio: now.getFullYear()
   }
   showPromo2x1Modal.value = true
 }
@@ -629,8 +733,6 @@ async function vincularPromo2x1() {
     return
   }
 
-  const inicioDate = parseDisplayDate(promo2x1Form.value.fechaInicio) || new Date()
-
   try {
     isSavingPromo2x1.value = true
     promo2x1Error.value = ""
@@ -641,14 +743,15 @@ async function vincularPromo2x1() {
       alumnoTitularId: titularId,
       alumnoAnexadoId: promo2x1Form.value.alumnoAnexadoId,
       meses: mesesNum,
-      fechaInicio: inicioDate.toISOString()
+      mesInicio: Number(promo2x1Form.value.mesInicio),
+      anioInicio: Number(promo2x1Form.value.anioInicio)
     })
 
     replaceAlumnoAnywhere(result.titular)
     replaceAlumnoAnywhere(result.anexado)
     alumnoPromoSeleccionado.value = result.titular
 
-    promo2x1Success.value = `¡Promo 2x1 vinculada con éxito por ${mesesNum} mes(es)!`
+    promo2x1Success.value = `¡Promo 2x1 vinculada con éxito para ${periodoEstimadoPromo.value}!`
   } catch (err) {
     console.error(err)
     promo2x1Error.value = err.message || "Error al vincular promo 2x1."
@@ -664,12 +767,11 @@ async function renovarPromo2x1() {
     return
   }
 
-  let fechaInicioIso = null
-  if (promoRenovarForm.value.modoInicio === "otra_fecha") {
-    const d = parseDisplayDate(promoRenovarForm.value.fechaInicio)
-    if (d) fechaInicioIso = d.toISOString()
-  } else if (promoRenovarForm.value.modoInicio === "hoy") {
-    fechaInicioIso = new Date().toISOString()
+  let mInicio = null
+  let aInicio = null
+  if (promoRenovarForm.value.modoInicio === "mes_especifico") {
+    mInicio = Number(promoRenovarForm.value.mesInicio)
+    aInicio = Number(promoRenovarForm.value.anioInicio)
   }
 
   try {
@@ -681,7 +783,8 @@ async function renovarPromo2x1() {
     const result = await MongoService.renovarPromo2x1({
       alumnoId,
       meses: mesesNum,
-      fechaInicio: fechaInicioIso
+      mesInicio: mInicio,
+      anioInicio: aInicio
     })
 
     replaceAlumnoAnywhere(result.titular)
@@ -1303,23 +1406,23 @@ async function confirmarYGuardarPago() {
                       v-if="alumno.promo2x1?.activo && isPromo2x1Activa(alumno)"
                       class="promo-badge"
                       :class="alumno.promo2x1.rol"
-                      :title="`Promo 2x1 activa hasta el ${formatDate(alumno.promo2x1.fechaFin)}`"
+                      :title="`Promo 2x1: ${formatPromoPeriodo(alumno.promo2x1)}`"
                     >
-                      🏷️ 2x1 {{ alumno.promo2x1.rol === 'titular' ? 'Titular' : 'Anexado' }} (con {{ getNombreVinculado(alumno) }})
+                      🏷️ 2x1 {{ alumno.promo2x1.rol === 'titular' ? 'Titular' : 'Anexado' }} ({{ formatPromoPeriodo(alumno.promo2x1) }})
                     </span>
                     <span
                       v-else-if="alumno.promo2x1?.activo && !isPromo2x1Activa(alumno)"
                       class="promo-badge expired"
-                      :title="`Promo 2x1 vencida el ${formatDate(alumno.promo2x1.fechaFin)}`"
+                      :title="`Promo 2x1 vencida: ${formatPromoPeriodo(alumno.promo2x1)}`"
                     >
-                      ⚠️ 2x1 Vencido (con {{ getNombreVinculado(alumno) }})
+                      ⚠️ 2x1 Vencido ({{ formatPromoPeriodo(alumno.promo2x1) }})
                     </span>
                   </h3>
                 </div>
                 <div class="alumno-payment-info">
                   <p v-if="alumno.celular" class="alumno-phone">📱 {{ alumno.celular }}</p>
                   <p v-if="isPromo2x1AnexadoActiva(alumno)" class="payment-info promo-covered-text">
-                    ✨ Cubierto por membresía 2x1 de <strong>{{ getNombreVinculado(alumno) }}</strong> hasta el {{ formatDate(alumno.promo2x1.fechaFin) }}
+                    ✨ Cubierto por membresía 2x1 de <strong>{{ getNombreVinculado(alumno) }}</strong> ({{ formatPromoPeriodo(alumno.promo2x1) }})
                   </p>
                   <p v-if="getUltimoPago(alumno)" class="payment-info">
                     Último pago: {{ formatDate(getUltimoPago(alumno).fecha) }} 
@@ -1789,11 +1892,14 @@ async function confirmarYGuardarPago() {
     >
       <div class="modal-content modal-promo2x1">
         <div class="modal-header">
-          <div>
-            <h2>Gestión Promo 2x1</h2>
-            <p class="modal-subtitle">
-              Alumno: <strong>{{ alumnoPromoSeleccionado.nombre }} {{ alumnoPromoSeleccionado.apellido }}</strong>
-            </p>
+          <div class="header-title-group">
+            <span class="header-icon">🏷️</span>
+            <div>
+              <h2>Gestión Promo 2x1</h2>
+              <p class="modal-subtitle">
+                Alumno Titular: <strong>{{ alumnoPromoSeleccionado.nombre }} {{ alumnoPromoSeleccionado.apellido }}</strong>
+              </p>
+            </div>
           </div>
           <button @click="closePromo2x1Modal" class="close-button">✕</button>
         </div>
@@ -1816,80 +1922,66 @@ async function confirmarYGuardarPago() {
                 {{ isPromo2x1Activa(alumnoPromoSeleccionado) ? '🟢 Promo 2x1 Vigente' : '🔴 Promo 2x1 Vencida' }}
               </span>
               <span class="role-chip">
-                Rol: {{ alumnoPromoSeleccionado.promo2x1.rol === 'titular' ? 'Titular (Abona membresía)' : 'Anexado (Beneficiario)' }}
+                Rol: {{ alumnoPromoSeleccionado.promo2x1.rol === 'titular' ? 'Titular (Paga cuota)' : 'Anexado (Beneficiario)' }}
               </span>
             </div>
             <div class="promo-status-details">
               <p><strong>Vinculado con:</strong> {{ getNombreVinculado(alumnoPromoSeleccionado) }}</p>
-              <p><strong>Periodo contratado:</strong> {{ alumnoPromoSeleccionado.promo2x1.meses }} mes(es)</p>
-              <p><strong>Fecha Inicio:</strong> {{ formatDate(alumnoPromoSeleccionado.promo2x1.fechaInicio) }}</p>
-              <p><strong>Fecha Fin / Vencimiento:</strong> {{ formatDate(alumnoPromoSeleccionado.promo2x1.fechaFin) }}</p>
+              <p><strong>Meses cubiertos:</strong> {{ formatPromoPeriodo(alumnoPromoSeleccionado.promo2x1) }} ({{ alumnoPromoSeleccionado.promo2x1.meses }} mes/es)</p>
             </div>
             <p v-if="!isPromo2x1Activa(alumnoPromoSeleccionado)" class="expired-notice">
-              ⚠️ La promo finalizó. A menos que se renueve, el alumno anexado se contabiliza como alumno independiente en las estadísticas y requiere abonar su propia cuota.
+              ⚠️ La promo finalizó. A menos que se renueve, el alumno anexado se cuenta como alumno independiente en las estadísticas y requiere abonar su cuota.
             </p>
           </div>
 
           <!-- Formulario de Renovación -->
           <form @submit.prevent="renovarPromo2x1" class="promo-renew-section">
             <h3>Renovar Promo 2x1</h3>
-            <p class="help-text">Agregá más meses de promo para extender la vigencia de ambos alumnos.</p>
+            <p class="help-text">Sumá meses de promo para continuar cubriendo a ambos alumnos.</p>
 
-            <div class="form-group">
-              <label for="renovarMeses">Cantidad de meses a sumar *</label>
-              <input
-                id="renovarMeses"
-                v-model="promoRenovarForm.meses"
-                type="number"
-                min="1"
-                max="24"
-                required
-                class="select-input"
-              />
-            </div>
+            <div class="form-row-2col">
+              <div class="form-group">
+                <label for="renovarMeses">Meses a sumar *</label>
+                <select id="renovarMeses" v-model="promoRenovarForm.meses" class="select-input" required>
+                  <option :value="1">1 mes</option>
+                  <option :value="2">2 meses</option>
+                  <option :value="3">3 meses</option>
+                  <option :value="4">4 meses</option>
+                  <option :value="5">5 meses</option>
+                  <option :value="6">6 meses</option>
+                  <option :value="12">12 meses (1 año)</option>
+                </select>
+              </div>
 
-            <div class="form-group">
-              <label>Iniciar extensión desde:</label>
-              <div class="radio-options">
-                <label class="radio-label">
-                  <input
-                    type="radio"
-                    v-model="promoRenovarForm.modoInicio"
-                    value="fin_actual"
-                  />
-                  Desde el vencimiento actual ({{ formatDate(alumnoPromoSeleccionado.promo2x1.fechaFin) }})
-                </label>
-                <label class="radio-label">
-                  <input
-                    type="radio"
-                    v-model="promoRenovarForm.modoInicio"
-                    value="hoy"
-                  />
-                  Desde hoy
-                </label>
-                <label class="radio-label">
-                  <input
-                    type="radio"
-                    v-model="promoRenovarForm.modoInicio"
-                    value="otra_fecha"
-                  />
-                  Otra fecha específica
-                </label>
+              <div class="form-group">
+                <label>Modo de inicio</label>
+                <select v-model="promoRenovarForm.modoInicio" class="select-input">
+                  <option value="consecutivo">Consecutivo (al terminar periodo actual)</option>
+                  <option value="mes_especifico">Elegir mes de inicio</option>
+                </select>
               </div>
             </div>
 
-            <div class="form-group" v-if="promoRenovarForm.modoInicio === 'otra_fecha'">
-              <DateField
-                id="renovarFechaInicio"
-                label="Fecha de inicio *"
-                v-model="promoRenovarForm.fechaInicio"
-                required
-              />
+            <div class="form-row-2col" v-if="promoRenovarForm.modoInicio === 'mes_especifico'">
+              <div class="form-group">
+                <label for="renovarMesInicio">Mes de inicio</label>
+                <select id="renovarMesInicio" v-model="promoRenovarForm.mesInicio" class="select-input">
+                  <option v-for="m in opcionesMeses" :key="m.val" :value="m.val">
+                    {{ m.label }}
+                  </option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="renovarAnioInicio">Año de inicio</label>
+                <select id="renovarAnioInicio" v-model="promoRenovarForm.anioInicio" class="select-input">
+                  <option v-for="a in opcionesAnios" :key="a" :value="a">{{ a }}</option>
+                </select>
+              </div>
             </div>
 
-            <p class="preview-text">
-              📅 Nueva fecha de vencimiento estimada: <strong>{{ fechaFinEstimadaRenovacion }}</strong>
-            </p>
+            <div class="promo-preview-box">
+              <p>📅 <strong>Nuevo período cubierto:</strong> {{ periodoEstimadoRenovacion }}</p>
+            </div>
 
             <div class="modal-actions">
               <button
@@ -1913,71 +2005,102 @@ async function confirmarYGuardarPago() {
 
         <!-- CASO 2: Alumno NO tiene Promo 2x1 -> Vincular a otro alumno -->
         <div v-else class="promo-new-section">
-          <p class="section-intro">
-            Al activar el 2x1, <strong>{{ alumnoPromoSeleccionado.nombre }}</strong> será el <strong>titular</strong> (el que abona la membresía) y el alumno anexado quedará cubierto durante los meses elegidos <strong>sin sumar cuota en las estadísticas</strong>.
-          </p>
+          <div class="section-intro">
+            <span class="intro-icon">ℹ️</span>
+            <div>
+              Al activar el 2x1, <strong>{{ alumnoPromoSeleccionado.nombre }}</strong> es el <strong>titular</strong> (abona 1 membresía) y el alumno anexado quedará cubierto durante los meses elegidos <strong>sin duplicar en las estadísticas</strong>.
+            </div>
+          </div>
 
           <form @submit.prevent="vincularPromo2x1">
             <div class="form-group">
-              <label for="searchAlumnoAnexo">Buscar alumno a anexar:</label>
-              <input
-                id="searchAlumnoAnexo"
-                v-model="promo2x1Form.searchFilter"
-                type="text"
-                placeholder="Escribí un nombre o entrenador..."
-                class="select-input search-input"
-              />
-            </div>
-
-            <div class="form-group">
-              <label for="alumnoAnexadoSelect">Seleccionar Alumno Anexado (Beneficiario 2x1) *</label>
+              <label for="alumnoAnexadoSelect">Seleccionar Alumno a anexar (Beneficiario 2x1) *</label>
+              <div class="search-box-wrapper">
+                <input
+                  id="searchAlumnoAnexo"
+                  v-model="promo2x1Form.searchFilter"
+                  type="text"
+                  placeholder="🔍 Buscar por nombre o entrenador..."
+                  class="select-input search-input"
+                />
+              </div>
               <select
                 id="alumnoAnexadoSelect"
                 v-model="promo2x1Form.alumnoAnexadoId"
                 required
                 class="select-input student-select-box"
-                size="6"
+                size="5"
               >
                 <option
                   v-for="al in alumnosFiltradosParaPromo"
                   :key="al.id"
                   :value="al.id"
                 >
-                  {{ al.nombreCompleto }} (Entrenador: {{ al.entrenadorNombre }})
+                  {{ al.nombreCompleto }} · Prof. {{ al.entrenadorNombre }}
                 </option>
               </select>
               <small v-if="alumnosFiltradosParaPromo.length === 0" class="empty-list-note">
-                No se encontraron alumnos con ese criterio.
+                No se encontraron alumnos con ese nombre.
               </small>
             </div>
 
-            <div class="form-row-2col">
-              <div class="form-group">
-                <label for="promoMeses">Meses definidos de promo 2x1 *</label>
-                <input
-                  id="promoMeses"
-                  v-model="promo2x1Form.meses"
-                  type="number"
-                  min="1"
-                  max="24"
-                  required
-                  class="select-input"
-                />
-              </div>
+            <div class="period-selection-card">
+              <span class="period-card-title">Período de vigencia 2x1</span>
+              <div class="form-row-3col">
+                <div class="form-group">
+                  <label for="promoMesInicio">Mes de inicio *</label>
+                  <select
+                    id="promoMesInicio"
+                    v-model="promo2x1Form.mesInicio"
+                    required
+                    class="select-input"
+                  >
+                    <option v-for="m in opcionesMeses" :key="m.val" :value="m.val">
+                      {{ m.label }}
+                    </option>
+                  </select>
+                </div>
 
-              <div class="form-group">
-                <DateField
-                  id="promoFechaInicio"
-                  label="Fecha de inicio *"
-                  v-model="promo2x1Form.fechaInicio"
-                  required
-                />
+                <div class="form-group">
+                  <label for="promoAnioInicio">Año *</label>
+                  <select
+                    id="promoAnioInicio"
+                    v-model="promo2x1Form.anioInicio"
+                    required
+                    class="select-input"
+                  >
+                    <option v-for="a in opcionesAnios" :key="a" :value="a">{{ a }}</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label for="promoMeses">Duración *</label>
+                  <select
+                    id="promoMeses"
+                    v-model="promo2x1Form.meses"
+                    required
+                    class="select-input"
+                  >
+                    <option :value="1">1 mes</option>
+                    <option :value="2">2 meses</option>
+                    <option :value="3">3 meses</option>
+                    <option :value="4">4 meses</option>
+                    <option :value="5">5 meses</option>
+                    <option :value="6">6 meses</option>
+                    <option :value="12">12 meses (1 año)</option>
+                  </select>
+                </div>
               </div>
             </div>
 
             <div class="promo-preview-box">
-              <p>✨ <strong>Resumen:</strong> Cubrirá al alumno anexado hasta el <strong>{{ fechaFinEstimadaPromo }}</strong>.</p>
-              <p class="preview-subtext">Durante este periodo, el alumno anexado figurará "Al Día" sin contar como ingreso esperado en las estadísticas.</p>
+              <p class="preview-title">
+                ✨ <strong>Meses cubiertos por el 2x1:</strong>
+                <span class="preview-period-highlight">{{ periodoEstimadoPromo }}</span>
+              </p>
+              <p class="preview-subtext">
+                Durante este período, el alumno anexado figurará "Al Día" sin contar como ingreso esperado en las estadísticas.
+              </p>
             </div>
 
             <div class="modal-actions">
@@ -2901,6 +3024,17 @@ async function confirmarYGuardarPago() {
   width: 95%;
 }
 
+.header-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
 .modal-subtitle {
   color: var(--subtitle-text);
   font-size: 0.9rem;
@@ -2909,30 +3043,49 @@ async function confirmarYGuardarPago() {
 
 .section-intro {
   color: var(--body-text);
-  font-size: 0.92rem;
+  font-size: 0.9rem;
   line-height: 1.45;
   margin-bottom: 16px;
   background: var(--input-bg);
-  padding: 12px;
+  padding: 12px 14px;
   border-radius: 8px;
   border-left: 4px solid var(--rheb-primary-green);
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.intro-icon {
+  font-size: 1.25rem;
+  line-height: 1.3;
+  flex-shrink: 0;
+}
+
+.search-box-wrapper {
+  margin-bottom: 6px;
+}
+
+.search-input {
+  width: 100%;
 }
 
 .student-select-box {
   min-height: 130px;
   padding: 6px;
+  width: 100%;
 }
 
 .student-select-box option {
-  padding: 6px 10px;
+  padding: 7px 10px;
   border-radius: 4px;
   margin-bottom: 2px;
+  font-size: 0.9rem;
 }
 
 .student-select-box option:checked {
   background-color: var(--rheb-primary-green);
   color: #111;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .empty-list-note {
@@ -2942,10 +3095,41 @@ async function confirmarYGuardarPago() {
   font-style: italic;
 }
 
+.period-selection-card {
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-top: 12px;
+  margin-bottom: 12px;
+}
+
+.period-card-title {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--subtitle-text);
+  margin-bottom: 8px;
+}
+
 .form-row-2col {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+.form-row-3col {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 480px) {
+  .form-row-3col {
+    grid-template-columns: 1fr;
+  }
 }
 
 .promo-preview-box {
@@ -2953,7 +3137,7 @@ async function confirmarYGuardarPago() {
   border: 1px dashed rgba(46, 204, 113, 0.4);
   border-radius: 8px;
   padding: 12px 14px;
-  margin-top: 14px;
+  margin-top: 10px;
   margin-bottom: 16px;
 }
 
@@ -2963,10 +3147,23 @@ async function confirmarYGuardarPago() {
   color: var(--header-text);
 }
 
+.preview-title {
+  font-size: 0.95rem !important;
+}
+
+.preview-period-highlight {
+  color: var(--rheb-primary-green);
+  font-weight: 800;
+  margin-left: 6px;
+  text-decoration: underline;
+  text-decoration-color: rgba(46, 204, 113, 0.4);
+}
+
 .preview-subtext {
-  font-size: 0.8rem !important;
+  font-size: 0.82rem !important;
   color: var(--subtitle-text) !important;
-  margin-top: 4px !important;
+  margin-top: 6px !important;
+  line-height: 1.4;
 }
 
 .promo-status-card {

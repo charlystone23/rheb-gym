@@ -271,18 +271,30 @@ function findAlumnoById(alumnoId) {
 function isPromo2x1AnexadoActiva(alumno, referenceDate = new Date()) {
   if (!alumno?.promo2x1?.activo) return false
   if (alumno.promo2x1.rol !== "anexado") return false
-  if (!alumno.promo2x1.fechaInicio || !alumno.promo2x1.fechaFin) return false
 
   const refDate = new Date(referenceDate)
-  const refMonth = refDate.getFullYear() * 12 + refDate.getMonth()
+  const targetYear = refDate.getFullYear()
+  const targetMonth = refDate.getMonth() + 1
+  const targetTotal = targetYear * 12 + targetMonth
 
-  const inicio = new Date(alumno.promo2x1.fechaInicio)
-  const inicioMonth = inicio.getFullYear() * 12 + inicio.getMonth()
+  let startTotal = 0
+  let endTotal = 0
 
-  const fin = new Date(alumno.promo2x1.fechaFin)
-  const finMonth = fin.getFullYear() * 12 + fin.getMonth()
+  if (alumno.promo2x1.mesInicio && alumno.promo2x1.anioInicio) {
+    startTotal = alumno.promo2x1.anioInicio * 12 + Number(alumno.promo2x1.mesInicio)
+    endTotal = (alumno.promo2x1.anioFin && alumno.promo2x1.mesFin)
+      ? (alumno.promo2x1.anioFin * 12 + Number(alumno.promo2x1.mesFin))
+      : startTotal + (Number(alumno.promo2x1.meses) || 1) - 1
+  } else if (alumno.promo2x1.fechaInicio && alumno.promo2x1.fechaFin) {
+    const inicio = new Date(alumno.promo2x1.fechaInicio)
+    const fin = new Date(alumno.promo2x1.fechaFin)
+    startTotal = inicio.getFullYear() * 12 + (inicio.getMonth() + 1)
+    endTotal = fin.getFullYear() * 12 + (fin.getMonth() + 1)
+  } else {
+    return false
+  }
 
-  return refMonth >= inicioMonth && refMonth <= finMonth
+  return targetTotal >= startTotal && targetTotal <= endTotal
 }
 
 function getEstimatedAmountForAlumno(alumno, referenceDate = new Date()) {
