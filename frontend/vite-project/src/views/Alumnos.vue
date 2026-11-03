@@ -347,7 +347,45 @@ function getUltimoPagoHastaPeriodo(alumno, referenceDate = new Date()) {
     })[0] || null
 }
 
+function findAlumnoById(alumnoId) {
+  if (!alumnoId) return null
+  const idStr = String(alumnoId._id || alumnoId.id || alumnoId)
+  return (alumnos.value || []).find((a) => String(a._id || a.id) === idStr) || null
+}
+
+function isPromo2x1Activa(alumno, referenceDate = new Date()) {
+  if (!alumno?.promo2x1?.activo) return false
+  if (!alumno.promo2x1.fechaInicio || !alumno.promo2x1.fechaFin) return false
+  const ref = new Date(referenceDate)
+  const fin = new Date(alumno.promo2x1.fechaFin)
+  fin.setHours(23, 59, 59, 999)
+  return ref <= fin
+}
+
+function isPromo2x1AnexadoActiva(alumno, referenceDate = new Date()) {
+  return isPromo2x1Activa(alumno, referenceDate) && alumno?.promo2x1?.rol === "anexado"
+}
+
+function getNombreVinculado(alumno) {
+  if (!alumno?.promo2x1?.alumnoVinculado) return "Alumno vinculado"
+  if (typeof alumno.promo2x1.alumnoVinculado === "object" && alumno.promo2x1.alumnoVinculado.nombre) {
+    return `${alumno.promo2x1.alumnoVinculado.nombre} ${alumno.promo2x1.alumnoVinculado.apellido || ""}`.trim()
+  }
+  const encontrado = findAlumnoById(alumno.promo2x1.alumnoVinculado)
+  if (encontrado) {
+    return `${encontrado.nombre} ${encontrado.apellido || ""}`.trim()
+  }
+  return "Alumno vinculado"
+}
+
 function getProximaFechaPago(alumno, referenceDate = new Date()) {
+  if (isPromo2x1AnexadoActiva(alumno, referenceDate)) {
+    const titular = findAlumnoById(alumno.promo2x1?.alumnoVinculado)
+    if (titular) {
+      return getProximaFechaPago(titular, referenceDate)
+    }
+  }
+
   const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
   const hoy = new Date(referenceDate)
   hoy.setHours(0, 0, 0, 0)
@@ -365,6 +403,13 @@ function getProximaFechaPago(alumno, referenceDate = new Date()) {
 }
 
 function getDaysUntilPayment(alumno, referenceDate = new Date()) {
+  if (isPromo2x1AnexadoActiva(alumno, referenceDate)) {
+    const titular = findAlumnoById(alumno.promo2x1?.alumnoVinculado)
+    if (titular) {
+      return getDaysUntilPayment(titular, referenceDate)
+    }
+  }
+
   const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
   if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno))) {
     return null
@@ -379,6 +424,14 @@ function getDaysUntilPayment(alumno, referenceDate = new Date()) {
 }
 
 function getPaymentStatus(alumno, referenceDate = new Date()) {
+  if (isPromo2x1AnexadoActiva(alumno, referenceDate)) {
+    const titular = findAlumnoById(alumno.promo2x1?.alumnoVinculado)
+    if (titular) {
+      return getPaymentStatus(titular, referenceDate)
+    }
+    return "green"
+  }
+
   const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
   if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno))) {
     return "red"
@@ -399,6 +452,10 @@ function formatDate(date) {
 }
 
 function formatNextPaymentDate(alumno) {
+  if (isPromo2x1AnexadoActiva(alumno)) {
+    return `Cubierto 2x1 (hasta ${formatDate(alumno.promo2x1.fechaFin)})`
+  }
+
   const ultimoPago = getUltimoPagoHastaPeriodo(alumno)
   if (!ultimoPago) return "Sin pago"
   if (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle)) return "Promesa pendiente"
@@ -1005,9 +1062,30 @@ async function confirmarDelegacion() {
         >
           <div class="alumno-info">
             <div class="alumno-name">
-              <h3>{{ alumno.nombre }} {{ alumno.apellido }}<span v-if="hasPendingPartialPayment(alumno)" class="partial-indicator">*</span></h3>
+              <h3>
+                {{ alumno.nombre }} {{ alumno.apellido }}
+                <span v-if="hasPendingPartialPayment(alumno)" class="partial-indicator">*</span>
+                <span
+                  v-if="alumno.promo2x1?.activo && isPromo2x1Activa(alumno)"
+                  class="promo-badge"
+                  :class="alumno.promo2x1.rol"
+                  :title="`Promo 2x1 activa hasta el ${formatDate(alumno.promo2x1.fechaFin)}`"
+                >
+                  🏷️ 2x1 {{ alumno.promo2x1.rol === 'titular' ? 'Titular' : 'Anexado' }} (con {{ getNombreVinculado(alumno) }})
+                </span>
+                <span
+                  v-else-if="alumno.promo2x1?.activo && !isPromo2x1Activa(alumno)"
+                  class="promo-badge expired"
+                  :title="`Promo 2x1 vencida el ${formatDate(alumno.promo2x1.fechaFin)}`"
+                >
+                  ⚠️ 2x1 Vencido (con {{ getNombreVinculado(alumno) }})
+                </span>
+              </h3>
             </div>
             <div class="alumno-payment">
+              <p v-if="isPromo2x1AnexadoActiva(alumno)" class="promo-covered-info">
+                ✨ Cubierto por membresía 2x1 de <strong>{{ getNombreVinculado(alumno) }}</strong> hasta el {{ formatDate(alumno.promo2x1.fechaFin) }}
+              </p>
               <p class="payment-label">Último pago:</p>
               <p class="payment-date" v-if="getUltimoPago(alumno)">
                 {{ formatDate(getUltimoPago(alumno).fecha) }} 
@@ -1016,7 +1094,7 @@ async function confirmarDelegacion() {
                   {{ getUltimoPago(alumno).membresia.nombre }} - ${{ getPaymentAmount(getUltimoPago(alumno)).toLocaleString() }}
                 </span>
               </p>
-              <p class="payment-date" v-else>Sin pagos registrados</p>
+              <p class="payment-date" v-else-if="!isPromo2x1AnexadoActiva(alumno)">Sin pagos registrados</p>
               <p class="next-payment">Próximo pago: {{ formatNextPaymentDate(alumno) }}</p>
               
               <!-- Botón para ver historial -->
@@ -2552,5 +2630,44 @@ async function confirmarDelegacion() {
     grid-template-columns: minmax(0, 1fr) 220px;
     align-items: end;
   }
+}
+
+/* --- PROMO 2X1 STYLES --- */
+.promo-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  margin-left: 8px;
+  vertical-align: middle;
+  text-transform: none;
+}
+
+.promo-badge.titular {
+  background: rgba(46, 204, 113, 0.15);
+  color: #27ae60;
+  border: 1px solid rgba(46, 204, 113, 0.35);
+}
+
+.promo-badge.anexado {
+  background: rgba(52, 152, 219, 0.15);
+  color: #2980b9;
+  border: 1px solid rgba(52, 152, 219, 0.35);
+}
+
+.promo-badge.expired {
+  background: rgba(231, 76, 60, 0.15);
+  color: #c0392b;
+  border: 1px solid rgba(231, 76, 60, 0.35);
+}
+
+.promo-covered-info {
+  color: #2980b9 !important;
+  font-weight: 600;
+  font-size: 0.88rem;
+  margin-bottom: 6px;
 }
 </style>

@@ -258,12 +258,50 @@ function getAlumnoMembershipSnapshot(alumno, referenceDate = new Date()) {
   return ultimoPagoConMembresia?.membresia || null
 }
 
+function findAlumnoById(alumnoId) {
+  if (!alumnoId) return null
+  const idStr = String(alumnoId._id || alumnoId)
+  for (const entrenador of entrenadores.value) {
+    const found = (entrenador.alumnos || []).find((a) => String(a._id || a.id) === idStr)
+    if (found) return found
+  }
+  return null
+}
+
+function isPromo2x1AnexadoActiva(alumno, referenceDate = new Date()) {
+  if (!alumno?.promo2x1?.activo) return false
+  if (alumno.promo2x1.rol !== "anexado") return false
+  if (!alumno.promo2x1.fechaInicio || !alumno.promo2x1.fechaFin) return false
+
+  const refDate = new Date(referenceDate)
+  const refMonth = refDate.getFullYear() * 12 + refDate.getMonth()
+
+  const inicio = new Date(alumno.promo2x1.fechaInicio)
+  const inicioMonth = inicio.getFullYear() * 12 + inicio.getMonth()
+
+  const fin = new Date(alumno.promo2x1.fechaFin)
+  const finMonth = fin.getFullYear() * 12 + fin.getMonth()
+
+  return refMonth >= inicioMonth && refMonth <= finMonth
+}
+
 function getEstimatedAmountForAlumno(alumno, referenceDate = new Date()) {
+  if (isPromo2x1AnexadoActiva(alumno, referenceDate)) {
+    return 0
+  }
   const membershipSnapshot = getAlumnoMembershipSnapshot(alumno, referenceDate)
   return getMembershipPrice(membershipSnapshot)
 }
 
 function getPaymentStatus(alumno, referenceDate = new Date()) {
+  if (isPromo2x1AnexadoActiva(alumno, referenceDate)) {
+    const titular = findAlumnoById(alumno.promo2x1?.alumnoVinculado)
+    if (titular) {
+      return getPaymentStatus(titular, referenceDate)
+    }
+    return "green"
+  }
+
   const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
   if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno, referenceDate))) {
     return "red"
@@ -513,14 +551,17 @@ async function exportToExcel() {
           return `${pFecha}: $${pMonto} [${pTipo}]${pDetalle}`
         }).join(' | ')
 
+        const isAnexadoPromo = isPromo2x1AnexadoActiva(alumno, statusReferenceDate)
+        const membNombre = membershipSnapshot?.nombre || 'Ninguna'
+
         alumnosRows.push({
           "Alumno": `${alumno.nombre} ${alumno.apellido}`,
           "Entrenador (A quién pertenece)": `${entrenador.nombre} ${entrenador.apellido || ''}`.trim(),
-          "Membresía": membershipSnapshot?.nombre || 'Ninguna',
-          "Precio Membresía": Number(membershipSnapshot?.precio || 0),
+          "Membresía": isAnexadoPromo ? `${membNombre} (2x1 Anexado)` : membNombre,
+          "Precio Membresía": isAnexadoPromo ? 0 : Number(membershipSnapshot?.precio || 0),
           "Estado de Pago del Mes": estadoPagoText,
           "Monto Abonado": Number(totalAbonado || 0),
-          "Detalle de Pagos": detallePagos || 'Sin pagos en este mes'
+          "Detalle de Pagos": isAnexadoPromo ? `Cubierto por 2x1 titular | ${detallePagos || 'Sin pagos directos'}` : (detallePagos || 'Sin pagos en este mes')
         })
       })
     })

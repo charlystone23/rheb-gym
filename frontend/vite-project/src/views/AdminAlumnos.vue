@@ -254,7 +254,49 @@ function getUltimoPagoHastaPeriodo(alumno, referenceDate = new Date()) {
     })[0] || null
 }
 
+function findAlumnoById(alumnoId) {
+  if (!alumnoId) return null
+  const idStr = String(alumnoId._id || alumnoId.id || alumnoId)
+  for (const entrenador of entrenadores.value) {
+    const found = (entrenador.alumnos || []).find((a) => String(a._id || a.id) === idStr)
+    if (found) return found
+  }
+  return null
+}
+
+function isPromo2x1Activa(alumno, referenceDate = new Date()) {
+  if (!alumno?.promo2x1?.activo) return false
+  if (!alumno.promo2x1.fechaInicio || !alumno.promo2x1.fechaFin) return false
+  const ref = new Date(referenceDate)
+  const fin = new Date(alumno.promo2x1.fechaFin)
+  fin.setHours(23, 59, 59, 999)
+  return ref <= fin
+}
+
+function isPromo2x1AnexadoActiva(alumno, referenceDate = new Date()) {
+  return isPromo2x1Activa(alumno, referenceDate) && alumno?.promo2x1?.rol === "anexado"
+}
+
+function getNombreVinculado(alumno) {
+  if (!alumno?.promo2x1?.alumnoVinculado) return "Alumno vinculado"
+  if (typeof alumno.promo2x1.alumnoVinculado === "object" && alumno.promo2x1.alumnoVinculado.nombre) {
+    return `${alumno.promo2x1.alumnoVinculado.nombre} ${alumno.promo2x1.alumnoVinculado.apellido || ""}`.trim()
+  }
+  const encontrado = findAlumnoById(alumno.promo2x1.alumnoVinculado)
+  if (encontrado) {
+    return `${encontrado.nombre} ${encontrado.apellido || ""}`.trim()
+  }
+  return "Alumno vinculado"
+}
+
 function getProximaFechaPago(alumno, referenceDate = new Date()) {
+  if (isPromo2x1AnexadoActiva(alumno, referenceDate)) {
+    const titular = findAlumnoById(alumno.promo2x1?.alumnoVinculado)
+    if (titular) {
+      return getProximaFechaPago(titular, referenceDate)
+    }
+  }
+
   const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
   const hoy = new Date(referenceDate)
   hoy.setHours(0, 0, 0, 0)
@@ -272,6 +314,13 @@ function getProximaFechaPago(alumno, referenceDate = new Date()) {
 }
 
 function getDaysUntilPayment(alumno, referenceDate = new Date()) {
+  if (isPromo2x1AnexadoActiva(alumno, referenceDate)) {
+    const titular = findAlumnoById(alumno.promo2x1?.alumnoVinculado)
+    if (titular) {
+      return getDaysUntilPayment(titular, referenceDate)
+    }
+  }
+
   const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
   if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno))) {
     return null
@@ -286,6 +335,14 @@ function getDaysUntilPayment(alumno, referenceDate = new Date()) {
 }
 
 function getPaymentStatus(alumno, referenceDate = new Date()) {
+  if (isPromo2x1AnexadoActiva(alumno, referenceDate)) {
+    const titular = findAlumnoById(alumno.promo2x1?.alumnoVinculado)
+    if (titular) {
+      return getPaymentStatus(titular, referenceDate)
+    }
+    return "green"
+  }
+
   const ultimoPago = getUltimoPagoHastaPeriodo(alumno, referenceDate)
   if (ultimoPago && (isPromisePayment(ultimoPago.tipo || ultimoPago.detalle) || hasPendingPartialPayment(alumno))) {
     return "red"
@@ -451,6 +508,245 @@ function replaceAlumnoInTrainer(entrenadorId, alumnoActualizado) {
       )
     }
   })
+}
+
+function replaceAlumnoAnywhere(alumnoActualizado) {
+  if (!alumnoActualizado) return
+  const idStr = String(getAlumnoId(alumnoActualizado))
+  entrenadores.value = entrenadores.value.map((entrenador) => ({
+    ...entrenador,
+    alumnos: (entrenador.alumnos || []).map((alumno) =>
+      String(getAlumnoId(alumno)) === idStr ? { ...alumno, ...alumnoActualizado } : alumno
+    )
+  }))
+}
+
+// --- PROMO 2x1 MODAL & ACTIONS ---
+const showPromo2x1Modal = ref(false)
+const alumnoPromoSeleccionado = ref(null)
+const entrenadorPromoSeleccionado = ref(null)
+const isSavingPromo2x1 = ref(false)
+const promo2x1Error = ref("")
+const promo2x1Success = ref("")
+
+const promo2x1Form = ref({
+  alumnoAnexadoId: "",
+  meses: 1,
+  fechaInicio: formatDateAR(new Date()),
+  searchFilter: ""
+})
+
+const promoRenovarForm = ref({
+  meses: 1,
+  modoInicio: "fin_actual",
+  fechaInicio: formatDateAR(new Date())
+})
+
+const todosLosAlumnosActivos = computed(() => {
+  const list = []
+  const currentId = alumnoPromoSeleccionado.value ? String(getAlumnoId(alumnoPromoSeleccionado.value)) : ""
+  entrenadores.value.forEach((entrenador) => {
+    (entrenador.alumnos || []).forEach((alumno) => {
+      const id = String(getAlumnoId(alumno))
+      if (alumno.estado !== "inactivo" && id !== currentId) {
+        list.push({
+          id,
+          _id: id,
+          nombreCompleto: `${alumno.nombre} ${alumno.apellido}`.trim(),
+          entrenadorNombre: `${entrenador.nombre} ${entrenador.apellido || ""}`.trim(),
+          celular: alumno.celular || "",
+          promo2x1: alumno.promo2x1
+        })
+      }
+    })
+  })
+  return list.sort((a, b) => a.nombreCompleto.localeCompare(b.nombreCompleto))
+})
+
+const alumnosFiltradosParaPromo = computed(() => {
+  const q = promo2x1Form.value.searchFilter.trim().toLowerCase()
+  if (!q) return todosLosAlumnosActivos.value
+  return todosLosAlumnosActivos.value.filter((a) =>
+    a.nombreCompleto.toLowerCase().includes(q) ||
+    a.entrenadorNombre.toLowerCase().includes(q)
+  )
+})
+
+const fechaFinEstimadaPromo = computed(() => {
+  const d = parseDisplayDate(promo2x1Form.value.fechaInicio) || new Date()
+  const meses = Math.max(1, parseInt(promo2x1Form.value.meses, 10) || 1)
+  const fin = new Date(d.getFullYear(), d.getMonth() + meses, d.getDate())
+  return formatDateAR(fin)
+})
+
+const fechaFinEstimadaRenovacion = computed(() => {
+  let inicio = new Date()
+  if (promoRenovarForm.value.modoInicio === "fin_actual" && alumnoPromoSeleccionado.value?.promo2x1?.fechaFin) {
+    inicio = new Date(alumnoPromoSeleccionado.value.promo2x1.fechaFin)
+  } else if (promoRenovarForm.value.modoInicio === "otra_fecha") {
+    inicio = parseDisplayDate(promoRenovarForm.value.fechaInicio) || new Date()
+  }
+  const meses = Math.max(1, parseInt(promoRenovarForm.value.meses, 10) || 1)
+  const fin = new Date(inicio.getFullYear(), inicio.getMonth() + meses, inicio.getDate())
+  return formatDateAR(fin)
+})
+
+function openPromo2x1Modal(entrenador, alumno) {
+  entrenadorPromoSeleccionado.value = entrenador
+  alumnoPromoSeleccionado.value = alumno
+  promo2x1Error.value = ""
+  promo2x1Success.value = ""
+  promo2x1Form.value = {
+    alumnoAnexadoId: "",
+    meses: 1,
+    fechaInicio: formatDateAR(new Date()),
+    searchFilter: ""
+  }
+  promoRenovarForm.value = {
+    meses: 1,
+    modoInicio: "fin_actual",
+    fechaInicio: formatDateAR(new Date())
+  }
+  showPromo2x1Modal.value = true
+}
+
+function closePromo2x1Modal() {
+  showPromo2x1Modal.value = false
+  alumnoPromoSeleccionado.value = null
+  entrenadorPromoSeleccionado.value = null
+  promo2x1Error.value = ""
+  promo2x1Success.value = ""
+}
+
+async function vincularPromo2x1() {
+  if (!promo2x1Form.value.alumnoAnexadoId) {
+    promo2x1Error.value = "Seleccioná al alumno que será anexado en el 2x1."
+    return
+  }
+  const mesesNum = parseInt(promo2x1Form.value.meses, 10)
+  if (!mesesNum || mesesNum < 1) {
+    promo2x1Error.value = "La cantidad de meses debe ser al menos 1."
+    return
+  }
+
+  const inicioDate = parseDisplayDate(promo2x1Form.value.fechaInicio) || new Date()
+
+  try {
+    isSavingPromo2x1.value = true
+    promo2x1Error.value = ""
+    promo2x1Success.value = ""
+
+    const titularId = getAlumnoId(alumnoPromoSeleccionado.value)
+    const result = await MongoService.vincularPromo2x1({
+      alumnoTitularId: titularId,
+      alumnoAnexadoId: promo2x1Form.value.alumnoAnexadoId,
+      meses: mesesNum,
+      fechaInicio: inicioDate.toISOString()
+    })
+
+    replaceAlumnoAnywhere(result.titular)
+    replaceAlumnoAnywhere(result.anexado)
+    alumnoPromoSeleccionado.value = result.titular
+
+    promo2x1Success.value = `¡Promo 2x1 vinculada con éxito por ${mesesNum} mes(es)!`
+  } catch (err) {
+    console.error(err)
+    promo2x1Error.value = err.message || "Error al vincular promo 2x1."
+  } finally {
+    isSavingPromo2x1.value = false
+  }
+}
+
+async function renovarPromo2x1() {
+  const mesesNum = parseInt(promoRenovarForm.value.meses, 10)
+  if (!mesesNum || mesesNum < 1) {
+    promo2x1Error.value = "La cantidad de meses a renovar debe ser al menos 1."
+    return
+  }
+
+  let fechaInicioIso = null
+  if (promoRenovarForm.value.modoInicio === "otra_fecha") {
+    const d = parseDisplayDate(promoRenovarForm.value.fechaInicio)
+    if (d) fechaInicioIso = d.toISOString()
+  } else if (promoRenovarForm.value.modoInicio === "hoy") {
+    fechaInicioIso = new Date().toISOString()
+  }
+
+  try {
+    isSavingPromo2x1.value = true
+    promo2x1Error.value = ""
+    promo2x1Success.value = ""
+
+    const alumnoId = getAlumnoId(alumnoPromoSeleccionado.value)
+    const result = await MongoService.renovarPromo2x1({
+      alumnoId,
+      meses: mesesNum,
+      fechaInicio: fechaInicioIso
+    })
+
+    replaceAlumnoAnywhere(result.titular)
+    replaceAlumnoAnywhere(result.anexado)
+
+    const updatedSelected = String(getAlumnoId(result.titular)) === String(alumnoId) ? result.titular : result.anexado
+    alumnoPromoSeleccionado.value = updatedSelected
+
+    promo2x1Success.value = `¡Promo 2x1 renovada por ${mesesNum} mes(es) adicionales!`
+  } catch (err) {
+    console.error(err)
+    promo2x1Error.value = err.message || "Error al renovar la promo 2x1."
+  } finally {
+    isSavingPromo2x1.value = false
+  }
+}
+
+async function desvincularPromo2x1() {
+  const confirmed = confirm("¿Estás seguro de que querés desvincular esta promo 2x1? Ambos alumnos volverán a gestionarse de forma independiente.")
+  if (!confirmed) return
+
+  try {
+    isSavingPromo2x1.value = true
+    promo2x1Error.value = ""
+    promo2x1Success.value = ""
+
+    const alumnoId = getAlumnoId(alumnoPromoSeleccionado.value)
+    const vinculadoId = alumnoPromoSeleccionado.value?.promo2x1?.alumnoVinculado?._id || alumnoPromoSeleccionado.value?.promo2x1?.alumnoVinculado
+
+    await MongoService.desvincularPromo2x1(alumnoId)
+
+    if (alumnoPromoSeleccionado.value) {
+      alumnoPromoSeleccionado.value.promo2x1 = {
+        activo: false,
+        rol: null,
+        alumnoVinculado: null,
+        meses: 0,
+        fechaInicio: null,
+        fechaFin: null
+      }
+      replaceAlumnoAnywhere(alumnoPromoSeleccionado.value)
+    }
+
+    if (vinculadoId) {
+      const vinculado = findAlumnoById(vinculadoId)
+      if (vinculado) {
+        vinculado.promo2x1 = {
+          activo: false,
+          rol: null,
+          alumnoVinculado: null,
+          meses: 0,
+          fechaInicio: null,
+          fechaFin: null
+        }
+        replaceAlumnoAnywhere(vinculado)
+      }
+    }
+
+    promo2x1Success.value = "Promo 2x1 desvinculada exitosamente. Ambos alumnos son ahora independientes."
+  } catch (err) {
+    console.error(err)
+    promo2x1Error.value = err.message || "Error al desvincular promo 2x1."
+  } finally {
+    isSavingPromo2x1.value = false
+  }
 }
 
 function openEditPaymentModal(entrenador, alumno, pagoSeleccionado = null) {
@@ -999,9 +1295,32 @@ async function confirmarYGuardarPago() {
               class="alumno-item"
             >
               <div class="alumno-details">
-                <h3>{{ alumno.nombre }} {{ alumno.apellido }}<span v-if="hasPendingPartialPayment(alumno)" class="partial-indicator">*</span></h3>
+                <div class="alumno-header-row">
+                  <h3>
+                    {{ alumno.nombre }} {{ alumno.apellido }}
+                    <span v-if="hasPendingPartialPayment(alumno)" class="partial-indicator">*</span>
+                    <span
+                      v-if="alumno.promo2x1?.activo && isPromo2x1Activa(alumno)"
+                      class="promo-badge"
+                      :class="alumno.promo2x1.rol"
+                      :title="`Promo 2x1 activa hasta el ${formatDate(alumno.promo2x1.fechaFin)}`"
+                    >
+                      🏷️ 2x1 {{ alumno.promo2x1.rol === 'titular' ? 'Titular' : 'Anexado' }} (con {{ getNombreVinculado(alumno) }})
+                    </span>
+                    <span
+                      v-else-if="alumno.promo2x1?.activo && !isPromo2x1Activa(alumno)"
+                      class="promo-badge expired"
+                      :title="`Promo 2x1 vencida el ${formatDate(alumno.promo2x1.fechaFin)}`"
+                    >
+                      ⚠️ 2x1 Vencido (con {{ getNombreVinculado(alumno) }})
+                    </span>
+                  </h3>
+                </div>
                 <div class="alumno-payment-info">
                   <p v-if="alumno.celular" class="alumno-phone">📱 {{ alumno.celular }}</p>
+                  <p v-if="isPromo2x1AnexadoActiva(alumno)" class="payment-info promo-covered-text">
+                    ✨ Cubierto por membresía 2x1 de <strong>{{ getNombreVinculado(alumno) }}</strong> hasta el {{ formatDate(alumno.promo2x1.fechaFin) }}
+                  </p>
                   <p v-if="getUltimoPago(alumno)" class="payment-info">
                     Último pago: {{ formatDate(getUltimoPago(alumno).fecha) }} 
                     <span class="payment-type">({{ getPaymentLabel(getUltimoPago(alumno)) }})</span>
@@ -1009,8 +1328,23 @@ async function confirmarYGuardarPago() {
                       <span class="separator">|</span> ${{ getDisplayedPaymentAmount(getUltimoPago(alumno)) }}
                     </span>
                   </p>
-                  <p v-else class="payment-info">Sin pagos registrados</p>
-                  <div v-if="getUltimoPago(alumno) || getUltimosPagos(alumno).length > 0" class="payment-actions-row">
+                  <p v-else-if="!isPromo2x1AnexadoActiva(alumno)" class="payment-info">Sin pagos registrados</p>
+                  <div class="payment-actions-row">
+                    <button
+                      type="button"
+                      @click="openPaymentModal(entrenador, alumno)"
+                      class="edit-payment-button register-payment-btn"
+                    >
+                      Registrar pago
+                    </button>
+                    <button
+                      type="button"
+                      @click="openPromo2x1Modal(entrenador, alumno)"
+                      class="promo-2x1-btn"
+                      :class="{ 'has-promo': alumno.promo2x1?.activo }"
+                    >
+                      🏷️ {{ alumno.promo2x1?.activo ? 'Gestionar 2x1' : 'Promo 2x1' }}
+                    </button>
                     <button
                       v-if="getUltimoPago(alumno)"
                       @click="openEditPaymentModal(entrenador, alumno, getUltimoPago(alumno))"
@@ -1443,6 +1777,227 @@ async function confirmarYGuardarPago() {
               {{ isSavingPayment ? "Guardando..." : "Guardar Cambios" }}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Gestión Promo 2x1 -->
+    <div
+      v-if="showPromo2x1Modal && alumnoPromoSeleccionado"
+      class="modal-overlay"
+      @click.self="closePromo2x1Modal"
+    >
+      <div class="modal-content modal-promo2x1">
+        <div class="modal-header">
+          <div>
+            <h2>Gestión Promo 2x1</h2>
+            <p class="modal-subtitle">
+              Alumno: <strong>{{ alumnoPromoSeleccionado.nombre }} {{ alumnoPromoSeleccionado.apellido }}</strong>
+            </p>
+          </div>
+          <button @click="closePromo2x1Modal" class="close-button">✕</button>
+        </div>
+
+        <div v-if="promo2x1Error" class="error-message">
+          {{ promo2x1Error }}
+        </div>
+        <div v-if="promo2x1Success" class="success-message">
+          {{ promo2x1Success }}
+        </div>
+
+        <!-- CASO 1: Alumno YA tiene Promo 2x1 (Activa o Vencida) -->
+        <div v-if="alumnoPromoSeleccionado.promo2x1?.activo" class="promo-current-info">
+          <div
+            class="promo-status-card"
+            :class="{ active: isPromo2x1Activa(alumnoPromoSeleccionado), expired: !isPromo2x1Activa(alumnoPromoSeleccionado) }"
+          >
+            <div class="promo-status-header">
+              <span class="status-chip">
+                {{ isPromo2x1Activa(alumnoPromoSeleccionado) ? '🟢 Promo 2x1 Vigente' : '🔴 Promo 2x1 Vencida' }}
+              </span>
+              <span class="role-chip">
+                Rol: {{ alumnoPromoSeleccionado.promo2x1.rol === 'titular' ? 'Titular (Abona membresía)' : 'Anexado (Beneficiario)' }}
+              </span>
+            </div>
+            <div class="promo-status-details">
+              <p><strong>Vinculado con:</strong> {{ getNombreVinculado(alumnoPromoSeleccionado) }}</p>
+              <p><strong>Periodo contratado:</strong> {{ alumnoPromoSeleccionado.promo2x1.meses }} mes(es)</p>
+              <p><strong>Fecha Inicio:</strong> {{ formatDate(alumnoPromoSeleccionado.promo2x1.fechaInicio) }}</p>
+              <p><strong>Fecha Fin / Vencimiento:</strong> {{ formatDate(alumnoPromoSeleccionado.promo2x1.fechaFin) }}</p>
+            </div>
+            <p v-if="!isPromo2x1Activa(alumnoPromoSeleccionado)" class="expired-notice">
+              ⚠️ La promo finalizó. A menos que se renueve, el alumno anexado se contabiliza como alumno independiente en las estadísticas y requiere abonar su propia cuota.
+            </p>
+          </div>
+
+          <!-- Formulario de Renovación -->
+          <form @submit.prevent="renovarPromo2x1" class="promo-renew-section">
+            <h3>Renovar Promo 2x1</h3>
+            <p class="help-text">Agregá más meses de promo para extender la vigencia de ambos alumnos.</p>
+
+            <div class="form-group">
+              <label for="renovarMeses">Cantidad de meses a sumar *</label>
+              <input
+                id="renovarMeses"
+                v-model="promoRenovarForm.meses"
+                type="number"
+                min="1"
+                max="24"
+                required
+                class="select-input"
+              />
+            </div>
+
+            <div class="form-group">
+              <label>Iniciar extensión desde:</label>
+              <div class="radio-options">
+                <label class="radio-label">
+                  <input
+                    type="radio"
+                    v-model="promoRenovarForm.modoInicio"
+                    value="fin_actual"
+                  />
+                  Desde el vencimiento actual ({{ formatDate(alumnoPromoSeleccionado.promo2x1.fechaFin) }})
+                </label>
+                <label class="radio-label">
+                  <input
+                    type="radio"
+                    v-model="promoRenovarForm.modoInicio"
+                    value="hoy"
+                  />
+                  Desde hoy
+                </label>
+                <label class="radio-label">
+                  <input
+                    type="radio"
+                    v-model="promoRenovarForm.modoInicio"
+                    value="otra_fecha"
+                  />
+                  Otra fecha específica
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group" v-if="promoRenovarForm.modoInicio === 'otra_fecha'">
+              <DateField
+                id="renovarFechaInicio"
+                label="Fecha de inicio *"
+                v-model="promoRenovarForm.fechaInicio"
+                required
+              />
+            </div>
+
+            <p class="preview-text">
+              📅 Nueva fecha de vencimiento estimada: <strong>{{ fechaFinEstimadaRenovacion }}</strong>
+            </p>
+
+            <div class="modal-actions">
+              <button
+                type="button"
+                @click="desvincularPromo2x1"
+                class="cancel-button danger-button"
+                :disabled="isSavingPromo2x1"
+              >
+                Desvincular 2x1
+              </button>
+              <button
+                type="submit"
+                class="submit-button"
+                :disabled="isSavingPromo2x1"
+              >
+                {{ isSavingPromo2x1 ? 'Guardando...' : 'Renovar Promo 2x1' }}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- CASO 2: Alumno NO tiene Promo 2x1 -> Vincular a otro alumno -->
+        <div v-else class="promo-new-section">
+          <p class="section-intro">
+            Al activar el 2x1, <strong>{{ alumnoPromoSeleccionado.nombre }}</strong> será el <strong>titular</strong> (el que abona la membresía) y el alumno anexado quedará cubierto durante los meses elegidos <strong>sin sumar cuota en las estadísticas</strong>.
+          </p>
+
+          <form @submit.prevent="vincularPromo2x1">
+            <div class="form-group">
+              <label for="searchAlumnoAnexo">Buscar alumno a anexar:</label>
+              <input
+                id="searchAlumnoAnexo"
+                v-model="promo2x1Form.searchFilter"
+                type="text"
+                placeholder="Escribí un nombre o entrenador..."
+                class="select-input search-input"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="alumnoAnexadoSelect">Seleccionar Alumno Anexado (Beneficiario 2x1) *</label>
+              <select
+                id="alumnoAnexadoSelect"
+                v-model="promo2x1Form.alumnoAnexadoId"
+                required
+                class="select-input student-select-box"
+                size="6"
+              >
+                <option
+                  v-for="al in alumnosFiltradosParaPromo"
+                  :key="al.id"
+                  :value="al.id"
+                >
+                  {{ al.nombreCompleto }} (Entrenador: {{ al.entrenadorNombre }})
+                </option>
+              </select>
+              <small v-if="alumnosFiltradosParaPromo.length === 0" class="empty-list-note">
+                No se encontraron alumnos con ese criterio.
+              </small>
+            </div>
+
+            <div class="form-row-2col">
+              <div class="form-group">
+                <label for="promoMeses">Meses definidos de promo 2x1 *</label>
+                <input
+                  id="promoMeses"
+                  v-model="promo2x1Form.meses"
+                  type="number"
+                  min="1"
+                  max="24"
+                  required
+                  class="select-input"
+                />
+              </div>
+
+              <div class="form-group">
+                <DateField
+                  id="promoFechaInicio"
+                  label="Fecha de inicio *"
+                  v-model="promo2x1Form.fechaInicio"
+                  required
+                />
+              </div>
+            </div>
+
+            <div class="promo-preview-box">
+              <p>✨ <strong>Resumen:</strong> Cubrirá al alumno anexado hasta el <strong>{{ fechaFinEstimadaPromo }}</strong>.</p>
+              <p class="preview-subtext">Durante este periodo, el alumno anexado figurará "Al Día" sin contar como ingreso esperado en las estadísticas.</p>
+            </div>
+
+            <div class="modal-actions">
+              <button
+                type="button"
+                @click="closePromo2x1Modal"
+                class="cancel-button"
+                :disabled="isSavingPromo2x1"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                class="submit-button"
+                :disabled="isSavingPromo2x1"
+              >
+                {{ isSavingPromo2x1 ? 'Vinculando...' : 'Vincular Promo 2x1' }}
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     </div>
@@ -2261,5 +2816,262 @@ async function confirmarYGuardarPago() {
 .confirm-button:hover {
   transform: translateY(-1px);
   box-shadow: 0 6px 14px rgba(0, 0, 0, 0.4);
+}
+
+/* --- PROMO 2X1 STYLES --- */
+.alumno-header-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.promo-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  margin-left: 8px;
+  vertical-align: middle;
+  text-transform: none;
+  letter-spacing: 0.2px;
+}
+
+.promo-badge.titular {
+  background: rgba(46, 204, 113, 0.15);
+  color: #27ae60;
+  border: 1px solid rgba(46, 204, 113, 0.35);
+}
+
+.promo-badge.anexado {
+  background: rgba(52, 152, 219, 0.15);
+  color: #2980b9;
+  border: 1px solid rgba(52, 152, 219, 0.35);
+}
+
+.promo-badge.expired {
+  background: rgba(231, 76, 60, 0.15);
+  color: #c0392b;
+  border: 1px solid rgba(231, 76, 60, 0.35);
+}
+
+.promo-covered-text {
+  color: #2980b9 !important;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.promo-2x1-btn {
+  background-color: var(--card-bg);
+  color: var(--header-text);
+  border: 1px solid var(--border-color);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.promo-2x1-btn:hover {
+  background-color: rgba(52, 152, 219, 0.12);
+  border-color: #3498db;
+  color: #2980b9;
+}
+
+.promo-2x1-btn.has-promo {
+  background: rgba(46, 204, 113, 0.12);
+  border-color: rgba(46, 204, 113, 0.4);
+  color: #27ae60;
+}
+
+.promo-2x1-btn.has-promo:hover {
+  background: rgba(46, 204, 113, 0.22);
+  border-color: #27ae60;
+}
+
+.modal-promo2x1 {
+  max-width: 580px;
+  width: 95%;
+}
+
+.modal-subtitle {
+  color: var(--subtitle-text);
+  font-size: 0.9rem;
+  margin-top: 4px;
+}
+
+.section-intro {
+  color: var(--body-text);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  margin-bottom: 16px;
+  background: var(--input-bg);
+  padding: 12px;
+  border-radius: 8px;
+  border-left: 4px solid var(--rheb-primary-green);
+}
+
+.student-select-box {
+  min-height: 130px;
+  padding: 6px;
+}
+
+.student-select-box option {
+  padding: 6px 10px;
+  border-radius: 4px;
+  margin-bottom: 2px;
+}
+
+.student-select-box option:checked {
+  background-color: var(--rheb-primary-green);
+  color: #111;
+  font-weight: 600;
+}
+
+.empty-list-note {
+  display: block;
+  color: var(--subtitle-text);
+  margin-top: 6px;
+  font-style: italic;
+}
+
+.form-row-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.promo-preview-box {
+  background: rgba(46, 204, 113, 0.08);
+  border: 1px dashed rgba(46, 204, 113, 0.4);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-top: 14px;
+  margin-bottom: 16px;
+}
+
+.promo-preview-box p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--header-text);
+}
+
+.preview-subtext {
+  font-size: 0.8rem !important;
+  color: var(--subtitle-text) !important;
+  margin-top: 4px !important;
+}
+
+.promo-status-card {
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 18px;
+  border: 1px solid var(--border-color);
+  background: var(--input-bg);
+}
+
+.promo-status-card.active {
+  border-left: 4px solid #27ae60;
+  background: rgba(46, 204, 113, 0.06);
+}
+
+.promo-status-card.expired {
+  border-left: 4px solid #c0392b;
+  background: rgba(231, 76, 60, 0.06);
+}
+
+.promo-status-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.status-chip {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.role-chip {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--subtitle-text);
+}
+
+.promo-status-details p {
+  margin: 4px 0;
+  font-size: 0.9rem;
+  color: var(--header-text);
+}
+
+.expired-notice {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: #c0392b;
+  font-weight: 600;
+}
+
+.promo-renew-section {
+  border-top: 1px solid var(--border-color);
+  padding-top: 16px;
+}
+
+.promo-renew-section h3 {
+  margin: 0 0 4px 0;
+  font-size: 1.05rem;
+  color: var(--header-text);
+}
+
+.help-text {
+  font-size: 0.85rem;
+  color: var(--subtitle-text);
+  margin-bottom: 14px;
+}
+
+.radio-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.radio-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  color: var(--body-text);
+  cursor: pointer;
+}
+
+.radio-label input[type="radio"] {
+  cursor: pointer;
+  accent-color: var(--rheb-primary-green);
+}
+
+.preview-text {
+  font-size: 0.9rem;
+  color: var(--header-text);
+  margin: 12px 0;
+}
+
+.success-message {
+  background: rgba(46, 204, 113, 0.15);
+  color: #27ae60;
+  border: 1px solid rgba(46, 204, 113, 0.35);
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  font-weight: 600;
+  font-size: 0.9rem;
 }
 </style>

@@ -231,6 +231,58 @@ export const MongoService = {
         }
     },
 
+    async vincularPromo2x1(payload) {
+        try {
+            const response = await fetch(`${API_URL}/alumnos/promo-2x1`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Error al vincular promo 2x1');
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error vincularPromo2x1:", error);
+            throw error;
+        }
+    },
+
+    async renovarPromo2x1(payload) {
+        try {
+            const response = await fetch(`${API_URL}/alumnos/promo-2x1/renovar`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Error al renovar promo 2x1');
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error renovarPromo2x1:", error);
+            throw error;
+        }
+    },
+
+    async desvincularPromo2x1(alumnoId) {
+        try {
+            const response = await fetch(`${API_URL}/alumnos/promo-2x1/${alumnoId}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Error al desvincular promo 2x1');
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("API Error desvincularPromo2x1:", error);
+            throw error;
+        }
+    },
+
     async deactivateUsuario(userId) {
         try {
             const response = await fetch(`${API_URL}/users/${userId}/deactivate`, {

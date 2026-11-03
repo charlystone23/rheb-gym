@@ -173,6 +173,14 @@ const AlumnoSchema = new mongoose.Schema({
     reactivatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     periodosActividad: { type: [PeriodoActividadSchema], default: [] },
     historialPagos: [PagoSchema],
+    promo2x1: {
+        activo: { type: Boolean, default: false },
+        rol: { type: String, enum: ['titular', 'anexado', null], default: null },
+        alumnoVinculado: { type: mongoose.Schema.Types.ObjectId, ref: 'Alumno', default: null },
+        meses: { type: Number, default: 1 },
+        fechaInicio: { type: Date, default: null },
+        fechaFin: { type: Date, default: null }
+    },
     entrenador: { type: mongoose.Schema.Types.ObjectId, ref: 'User' } // Link al entrenador
 }, { timestamps: true });
 
@@ -543,7 +551,9 @@ app.get('/api/entrenadores', async (req, res) => {
                 alumnoFilter.estado = 'activo';
             }
 
-            const alumnos = await Alumno.find(alumnoFilter).sort({ createdAt: -1 });
+            const alumnos = await Alumno.find(alumnoFilter)
+                .populate('promo2x1.alumnoVinculado', 'nombre apellido celular estado')
+                .sort({ createdAt: -1 });
             return {
                 ...entrenador.toObject(),
                 alumnos: alumnos
@@ -569,7 +579,9 @@ app.get('/api/alumnos', async (req, res) => {
         } else if (!includeInactive) {
             filter.estado = 'activo';
         }
-        const alumnos = await Alumno.find(filter).sort({ createdAt: -1 });
+        const alumnos = await Alumno.find(filter)
+            .populate('promo2x1.alumnoVinculado', 'nombre apellido celular estado')
+            .sort({ createdAt: -1 });
         res.json(alumnos);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -714,6 +726,188 @@ app.post('/api/alumnos/:id/reactivar', async (req, res) => {
         await alumno.save();
 
         res.json(alumno);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- PROMO 2x1 ROUTES ---
+function calcularFechaFinPromo(fechaInicio, meses) {
+    const inicio = new Date(fechaInicio);
+    if (isNaN(inicio.getTime())) return null;
+    const fin = new Date(inicio.getFullYear(), inicio.getMonth() + Number(meses), inicio.getDate(), 23, 59, 59, 999);
+    return fin;
+}
+
+// POST /api/alumnos/promo-2x1 - Vincular dos alumnos bajo promo 2x1
+app.post('/api/alumnos/promo-2x1', async (req, res) => {
+    try {
+        const { alumnoTitularId, alumnoAnexadoId, meses, fechaInicio } = req.body;
+        if (!alumnoTitularId || !alumnoAnexadoId) {
+            return res.status(400).json({ error: 'Debes indicar el alumno titular y el alumno a anexar.' });
+        }
+        if (alumnoTitularId.toString() === alumnoAnexadoId.toString()) {
+            return res.status(400).json({ error: 'No se puede anexar un alumno a sí mismo.' });
+        }
+
+        const titular = await Alumno.findById(alumnoTitularId);
+        const anexado = await Alumno.findById(alumnoAnexadoId);
+        if (!titular || !anexado) {
+            return res.status(404).json({ error: 'Uno o ambos alumnos no existen.' });
+        }
+
+        const mesesNum = Math.max(1, parseInt(meses, 10) || 1);
+        const inicioDate = fechaInicio ? new Date(fechaInicio) : new Date();
+        inicioDate.setHours(0, 0, 0, 0);
+        const finDate = calcularFechaFinPromo(inicioDate, mesesNum);
+
+        titular.promo2x1 = {
+            activo: true,
+            rol: 'titular',
+            alumnoVinculado: anexado._id,
+            meses: mesesNum,
+            fechaInicio: inicioDate,
+            fechaFin: finDate
+        };
+
+        anexado.promo2x1 = {
+            activo: true,
+            rol: 'anexado',
+            alumnoVinculado: titular._id,
+            meses: mesesNum,
+            fechaInicio: inicioDate,
+            fechaFin: finDate
+        };
+
+        await titular.save();
+        await anexado.save();
+
+        const [titularPop, anexadoPop] = await Promise.all([
+            Alumno.findById(titular._id).populate('promo2x1.alumnoVinculado', 'nombre apellido celular estado'),
+            Alumno.findById(anexado._id).populate('promo2x1.alumnoVinculado', 'nombre apellido celular estado')
+        ]);
+
+        res.json({
+            message: 'Promo 2x1 vinculada exitosamente',
+            titular: titularPop,
+            anexado: anexadoPop
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/alumnos/promo-2x1/renovar - Renovar o extender meses de promo 2x1
+app.post('/api/alumnos/promo-2x1/renovar', async (req, res) => {
+    try {
+        const { alumnoId, meses, fechaInicio } = req.body;
+        const alumno = await Alumno.findById(alumnoId);
+        if (!alumno || !alumno.promo2x1?.alumnoVinculado) {
+            return res.status(404).json({ error: 'El alumno no tiene una promo 2x1 vinculada.' });
+        }
+
+        const vinculado = await Alumno.findById(alumno.promo2x1.alumnoVinculado);
+        if (!vinculado) {
+            return res.status(404).json({ error: 'El alumno vinculado no fue encontrado.' });
+        }
+
+        const mesesNum = Math.max(1, parseInt(meses, 10) || 1);
+        const now = new Date();
+
+        // Determinar fecha de inicio: si se pasa explícitamente se usa esa;
+        // si la promo anterior aún no venció, se puede extender desde fechaFin actual;
+        // sino arranca desde hoy.
+        let inicioDate;
+        if (fechaInicio) {
+            inicioDate = new Date(fechaInicio);
+        } else if (alumno.promo2x1.fechaFin && new Date(alumno.promo2x1.fechaFin) > now) {
+            inicioDate = new Date(alumno.promo2x1.fechaFin);
+        } else {
+            inicioDate = new Date();
+        }
+        inicioDate.setHours(0, 0, 0, 0);
+
+        const finDate = calcularFechaFinPromo(inicioDate, mesesNum);
+
+        const esTitular = alumno.promo2x1.rol === 'titular';
+        const titular = esTitular ? alumno : vinculado;
+        const anexado = esTitular ? vinculado : alumno;
+
+        titular.promo2x1 = {
+            activo: true,
+            rol: 'titular',
+            alumnoVinculado: anexado._id,
+            meses: mesesNum,
+            fechaInicio: inicioDate,
+            fechaFin: finDate
+        };
+
+        anexado.promo2x1 = {
+            activo: true,
+            rol: 'anexado',
+            alumnoVinculado: titular._id,
+            meses: mesesNum,
+            fechaInicio: inicioDate,
+            fechaFin: finDate
+        };
+
+        await titular.save();
+        await anexado.save();
+
+        const [titularPop, anexadoPop] = await Promise.all([
+            Alumno.findById(titular._id).populate('promo2x1.alumnoVinculado', 'nombre apellido celular estado'),
+            Alumno.findById(anexado._id).populate('promo2x1.alumnoVinculado', 'nombre apellido celular estado')
+        ]);
+
+        res.json({
+            message: 'Promo 2x1 renovada exitosamente',
+            titular: titularPop,
+            anexado: anexadoPop
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// DELETE /api/alumnos/promo-2x1/:alumnoId - Desvincular promo 2x1
+app.delete('/api/alumnos/promo-2x1/:alumnoId', async (req, res) => {
+    try {
+        const { alumnoId } = req.params;
+        const alumno = await Alumno.findById(alumnoId);
+        if (!alumno) return res.status(404).json({ error: 'Alumno no encontrado' });
+
+        const vinculadoId = alumno.promo2x1?.alumnoVinculado;
+        alumno.promo2x1 = {
+            activo: false,
+            rol: null,
+            alumnoVinculado: null,
+            meses: 0,
+            fechaInicio: null,
+            fechaFin: null
+        };
+        await alumno.save();
+
+        let vinculado = null;
+        if (vinculadoId) {
+            vinculado = await Alumno.findById(vinculadoId);
+            if (vinculado) {
+                vinculado.promo2x1 = {
+                    activo: false,
+                    rol: null,
+                    alumnoVinculado: null,
+                    meses: 0,
+                    fechaInicio: null,
+                    fechaFin: null
+                };
+                await vinculado.save();
+            }
+        }
+
+        res.json({
+            message: 'Promo 2x1 desvinculada exitosamente',
+            alumno,
+            vinculado
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -1198,7 +1392,7 @@ app.post('/api/alumnos/:id/pagos', async (req, res) => {
             id,
             { $push: { historialPagos: pago } },
             { new: true }
-        );
+        ).populate('promo2x1.alumnoVinculado', 'nombre apellido celular estado');
 
         if (!alumno) return res.status(404).json({ error: 'Alumno no encontrado' });
 
@@ -1265,7 +1459,8 @@ app.put('/api/alumnos/:id/pagos/:pagoId', async (req, res) => {
         });
 
         await alumno.save();
-        res.json(alumno);
+        const alumnoPop = await Alumno.findById(alumno._id).populate('promo2x1.alumnoVinculado', 'nombre apellido celular estado');
+        res.json(alumnoPop);
     } catch (err) {
         res.status(400).json({ error: err.message });
     }
@@ -1284,7 +1479,8 @@ app.delete('/api/alumnos/:id/pagos/:pagoId', async (req, res) => {
         pago.deleteOne();
         await alumno.save();
 
-        res.json(alumno);
+        const alumnoPop = await Alumno.findById(alumno._id).populate('promo2x1.alumnoVinculado', 'nombre apellido celular estado');
+        res.json(alumnoPop);
     } catch (err) {
         res.status(400).json({ error: err.message });
     }
