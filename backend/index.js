@@ -54,41 +54,151 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
-// MongoDB Connection
-const clientOptions = { serverApi: { version: '1', strict: true, deprecationErrors: true } };
-let mongoConnectionErrorLogged = false;
+// MongoDB Connection con reintento automático (resiliente a fallos de DNS o red al iniciar)
+const clientOptions = {
+    serverApi: { version: '1', strict: true, deprecationErrors: true },
+    serverSelectionTimeoutMS: 10000,
+    socketTimeoutMS: 45000,
+};
 
-function logMongoConnectionError(err) {
-    if (mongoConnectionErrorLogged) return;
-    mongoConnectionErrorLogged = true;
+let mongoRetryTimer = null;
+let mongoConnectAttempts = 0;
+let isConnectingMongo = false;
+let lastMongoError = null;
+let nextRetryTimestamp = null;
 
-    const code = err?.code ? ` (${err.code})` : '';
-    const host = err?.hostname ? ` Host: ${err.hostname}.` : '';
-    console.warn(`MongoDB no disponible${code}. El backend sigue levantado, pero las rutas que usan base de datos no van a responder correctamente.${host}`);
+// Escala progresiva de reintento: 5s -> 10s -> 20s -> 30s -> 60s (1 min)
+function getRetryDelayMs(attempt) {
+    if (process.env.MONGO_RETRY_MS) {
+        const custom = Number(process.env.MONGO_RETRY_MS);
+        if (!Number.isNaN(custom) && custom >= 1000) return custom;
+    }
+    const delays = [5000, 10000, 20000, 30000, 60000];
+    return delays[Math.min(attempt - 1, delays.length - 1)];
 }
 
-mongoose.connect(process.env.MONGO_URI, clientOptions)
-    .then(() => console.log('MongoDB connected successfully'))
-    .catch(logMongoConnectionError);
+function logMongoConnectionError(err, retryDelayMs) {
+    const code = err?.code ? ` (${err.code})` : '';
+    const host = err?.hostname ? ` Host: ${err.hostname}.` : '';
+    const msg = err?.message ? ` Detalle: ${err.message}` : '';
+    const segs = Math.round(retryDelayMs / 1000);
+    console.warn(
+        `[MongoDB] Intento #${mongoConnectAttempts} fallido${code}.${host}${msg} -> Reintentando conexión en ${segs}s...`
+    );
+}
+
+function scheduleMongoReconnect(delayMs) {
+    if (mongoRetryTimer || mongoose.connection.readyState === 1 || mongoose.connection.readyState === 2) {
+        return;
+    }
+    nextRetryTimestamp = Date.now() + delayMs;
+    mongoRetryTimer = setTimeout(() => {
+        mongoRetryTimer = null;
+        nextRetryTimestamp = null;
+        connectToMongo();
+    }, delayMs);
+}
+
+async function connectToMongo() {
+    if (!process.env.MONGO_URI) {
+        console.error('[MongoDB] MONGO_URI no está definido en las variables de entorno.');
+        return;
+    }
+
+    // 1 = connected, 2 = connecting
+    if (isConnectingMongo || mongoose.connection.readyState === 1 || mongoose.connection.readyState === 2) {
+        return;
+    }
+
+    isConnectingMongo = true;
+    mongoConnectAttempts += 1;
+
+    try {
+        await mongoose.connect(process.env.MONGO_URI, clientOptions);
+        lastMongoError = null;
+        mongoConnectAttempts = 0;
+        if (mongoRetryTimer) {
+            clearTimeout(mongoRetryTimer);
+            mongoRetryTimer = null;
+            nextRetryTimestamp = null;
+        }
+        console.log('MongoDB connected successfully');
+    } catch (err) {
+        lastMongoError = {
+            code: err?.code || null,
+            message: err?.message || 'Error desconocido al conectar a MongoDB',
+            timestamp: new Date().toISOString()
+        };
+        const delayMs = getRetryDelayMs(mongoConnectAttempts);
+        logMongoConnectionError(err, delayMs);
+        scheduleMongoReconnect(delayMs);
+    } finally {
+        isConnectingMongo = false;
+    }
+}
 
 mongoose.connection.on('connected', () => {
     console.log('Mongoose connected to DB Cluster');
+    lastMongoError = null;
+    mongoConnectAttempts = 0;
+    if (mongoRetryTimer) {
+        clearTimeout(mongoRetryTimer);
+        mongoRetryTimer = null;
+        nextRetryTimestamp = null;
+    }
 });
 
 mongoose.connection.on('error', (err) => {
-    logMongoConnectionError(err);
+    lastMongoError = {
+        code: err?.code || null,
+        message: err?.message || 'Error en conexión activa de MongoDB',
+        timestamp: new Date().toISOString()
+    };
+    console.warn('[MongoDB] Error en conexión:', err?.message || err);
 });
 
 mongoose.connection.on('disconnected', () => {
     console.log('Mongoose disconnected');
+    // Si quedó desconectado fuera del flujo de connectToMongo, programar reconexión
+    if (!isConnectingMongo && !mongoRetryTimer) {
+        const delayMs = getRetryDelayMs(Math.max(1, mongoConnectAttempts + 1));
+        console.log(`[MongoDB] Programando reconexión automática en ${Math.round(delayMs / 1000)}s...`);
+        scheduleMongoReconnect(delayMs);
+    }
+});
+
+// Iniciar conexión al arrancar el servidor
+connectToMongo();
+
+// Middleware: si entra una petición a la API y Mongo está desconectado, fuerza un intento inmediato
+app.use('/api', async (req, res, next) => {
+    if (req.path === '/health') return next();
+    if (mongoose.connection.readyState === 0 && !isConnectingMongo) {
+        if (mongoRetryTimer) {
+            clearTimeout(mongoRetryTimer);
+            mongoRetryTimer = null;
+            nextRetryTimestamp = null;
+        }
+        await connectToMongo();
+    }
+    next();
 });
 
 // Test Route
 app.get('/api/health', (req, res) => {
+    const stateMap = {
+        0: 'disconnected',
+        1: 'connected',
+        2: 'connecting',
+        3: 'disconnecting'
+    };
     res.json({
         status: 'ok',
-        database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-        readyState: mongoose.connection.readyState
+        database: stateMap[mongoose.connection.readyState] || 'disconnected',
+        readyState: mongoose.connection.readyState,
+        reconnectAttempts: mongoConnectAttempts,
+        nextRetryInSeconds: nextRetryTimestamp ? Math.max(0, Math.round((nextRetryTimestamp - Date.now()) / 1000)) : null,
+        lastError: lastMongoError
     });
 });
 
