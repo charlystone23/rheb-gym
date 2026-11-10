@@ -765,24 +765,61 @@ function calcularPeriodoPromo2x1({ mesInicio, anioInicio, meses, fechaInicio }) 
     };
 }
 
-// POST /api/alumnos/promo-2x1 - Vincular dos alumnos bajo promo 2x1
+// POST /api/alumnos/promo-2x1 - Vincular dos alumnos bajo promo 2x1 (existente o creando nuevo alumno)
 app.post('/api/alumnos/promo-2x1', async (req, res) => {
     try {
-        const { alumnoTitularId, alumnoAnexadoId, meses, mesInicio, anioInicio, fechaInicio } = req.body;
-        if (!alumnoTitularId || !alumnoAnexadoId) {
-            return res.status(400).json({ error: 'Debes indicar el alumno titular y el alumno a anexar.' });
-        }
-        if (alumnoTitularId.toString() === alumnoAnexadoId.toString()) {
-            return res.status(400).json({ error: 'No se puede anexar un alumno a sí mismo.' });
+        const { alumnoTitularId, alumnoAnexadoId, nuevoAlumno, meses, mesInicio, anioInicio, fechaInicio } = req.body;
+        if (!alumnoTitularId) {
+            return res.status(400).json({ error: 'Debes indicar el alumno titular.' });
         }
 
         const titular = await Alumno.findById(alumnoTitularId);
-        const anexado = await Alumno.findById(alumnoAnexadoId);
-        if (!titular || !anexado) {
-            return res.status(404).json({ error: 'Uno o ambos alumnos no existen.' });
+        if (!titular) {
+            return res.status(404).json({ error: 'El alumno titular no existe.' });
         }
 
         const periodo = calcularPeriodoPromo2x1({ mesInicio, anioInicio, meses, fechaInicio });
+
+        let anexado = null;
+        let nuevoAlumnoCreado = false;
+
+        if (nuevoAlumno && typeof nuevoAlumno === 'object') {
+            const nombre = String(nuevoAlumno.nombre || '').trim();
+            const apellido = String(nuevoAlumno.apellido || '').trim();
+            const celular = String(nuevoAlumno.celular || '').trim();
+            const entrenadorId = nuevoAlumno.entrenador || titular.entrenador;
+
+            if (!nombre || !apellido) {
+                return res.status(400).json({ error: 'El nombre y apellido del nuevo alumno son obligatorios.' });
+            }
+
+            anexado = new Alumno({
+                nombre,
+                apellido,
+                celular,
+                entrenador: entrenadorId,
+                estado: 'activo',
+                fechaRegistro: new Date(),
+                periodosActividad: [{
+                    inicio: periodo.fechaInicio || new Date(),
+                    fin: null
+                }],
+                historialPagos: []
+            });
+            nuevoAlumnoCreado = true;
+        } else {
+            if (!alumnoAnexadoId) {
+                return res.status(400).json({ error: 'Debes seleccionar un alumno existente o completar los datos del nuevo alumno.' });
+            }
+            if (alumnoTitularId.toString() === alumnoAnexadoId.toString()) {
+                return res.status(400).json({ error: 'No se puede anexar un alumno a sí mismo.' });
+            }
+
+            anexado = await Alumno.findById(alumnoAnexadoId);
+            if (!anexado) {
+                return res.status(404).json({ error: 'El alumno a anexar no existe.' });
+            }
+        }
 
         titular.promo2x1 = {
             activo: true,
@@ -798,8 +835,8 @@ app.post('/api/alumnos/promo-2x1', async (req, res) => {
             ...periodo
         };
 
-        await titular.save();
         await anexado.save();
+        await titular.save();
 
         const [titularPop, anexadoPop] = await Promise.all([
             Alumno.findById(titular._id).populate('promo2x1.alumnoVinculado', 'nombre apellido celular estado'),
@@ -807,9 +844,12 @@ app.post('/api/alumnos/promo-2x1', async (req, res) => {
         ]);
 
         res.json({
-            message: 'Promo 2x1 vinculada exitosamente',
+            message: nuevoAlumnoCreado
+                ? 'Alumno creado y vinculado en Promo 2x1 exitosamente'
+                : 'Promo 2x1 vinculada exitosamente',
             titular: titularPop,
-            anexado: anexadoPop
+            anexado: anexadoPop,
+            nuevoAlumnoCreado
         });
     } catch (err) {
         res.status(500).json({ error: err.message });

@@ -557,12 +557,35 @@ function replaceAlumnoInTrainer(entrenadorId, alumnoActualizado) {
 function replaceAlumnoAnywhere(alumnoActualizado) {
   if (!alumnoActualizado) return
   const idStr = String(getAlumnoId(alumnoActualizado))
-  entrenadores.value = entrenadores.value.map((entrenador) => ({
-    ...entrenador,
-    alumnos: (entrenador.alumnos || []).map((alumno) =>
-      String(getAlumnoId(alumno)) === idStr ? { ...alumno, ...alumnoActualizado } : alumno
-    )
-  }))
+  const trainerIdStr = String(alumnoActualizado.entrenador?._id || alumnoActualizado.entrenador || "")
+
+  let found = false
+  entrenadores.value = entrenadores.value.map((entrenador) => {
+    const alumnos = entrenador.alumnos || []
+    const existsHere = alumnos.some((a) => String(getAlumnoId(a)) === idStr)
+    if (existsHere) {
+      found = true
+      return {
+        ...entrenador,
+        alumnos: alumnos.map((alumno) =>
+          String(getAlumnoId(alumno)) === idStr ? { ...alumno, ...alumnoActualizado } : alumno
+        )
+      }
+    }
+    return entrenador
+  })
+
+  if (!found && trainerIdStr) {
+    entrenadores.value = entrenadores.value.map((entrenador) => {
+      if (String(entrenador._id || entrenador.id) === trainerIdStr) {
+        return {
+          ...entrenador,
+          alumnos: [alumnoActualizado, ...(entrenador.alumnos || [])]
+        }
+      }
+      return entrenador
+    })
+  }
 }
 
 // --- PROMO 2x1 MODAL & ACTIONS ---
@@ -597,7 +620,12 @@ const opcionesAnios = computed(() => {
 })
 
 const promo2x1Form = ref({
+  modoAnexo: "existente",
   alumnoAnexadoId: "",
+  nuevoNombre: "",
+  nuevoApellido: "",
+  nuevoCelular: "",
+  nuevoEntrenadorId: "",
   meses: 1,
   mesInicio: currentMonthNumber,
   anioInicio: currentYearNumber,
@@ -609,6 +637,10 @@ const promoRenovarForm = ref({
   modoInicio: "consecutivo",
   mesInicio: currentMonthNumber,
   anioInicio: currentYearNumber
+})
+
+const entrenadoresActivos = computed(() => {
+  return entrenadores.value.filter((e) => e.estado !== "inactivo")
 })
 
 const todosLosAlumnosActivos = computed(() => {
@@ -699,7 +731,12 @@ function openPromo2x1Modal(entrenador, alumno) {
   promo2x1Success.value = ""
   const now = new Date()
   promo2x1Form.value = {
+    modoAnexo: "existente",
     alumnoAnexadoId: "",
+    nuevoNombre: "",
+    nuevoApellido: "",
+    nuevoCelular: "",
+    nuevoEntrenadorId: entrenador?._id || alumno?.entrenador?._id || alumno?.entrenador || "",
     meses: 1,
     mesInicio: now.getMonth() + 1,
     anioInicio: now.getFullYear(),
@@ -714,6 +751,17 @@ function openPromo2x1Modal(entrenador, alumno) {
   showPromo2x1Modal.value = true
 }
 
+function cambiarAModoNuevoAlumno() {
+  const textoBuscado = promo2x1Form.value.searchFilter.trim()
+  if (textoBuscado && !promo2x1Form.value.nuevoNombre) {
+    const partes = textoBuscado.split(/\s+/)
+    promo2x1Form.value.nuevoNombre = partes[0] || ""
+    promo2x1Form.value.nuevoApellido = partes.slice(1).join(" ") || ""
+  }
+  promo2x1Form.value.modoAnexo = "nuevo"
+  promo2x1Error.value = ""
+}
+
 function closePromo2x1Modal() {
   showPromo2x1Modal.value = false
   alumnoPromoSeleccionado.value = null
@@ -723,10 +771,24 @@ function closePromo2x1Modal() {
 }
 
 async function vincularPromo2x1() {
-  if (!promo2x1Form.value.alumnoAnexadoId) {
-    promo2x1Error.value = "Seleccioná al alumno que será anexado en el 2x1."
-    return
+  const esNuevo = promo2x1Form.value.modoAnexo === "nuevo"
+
+  if (esNuevo) {
+    if (!promo2x1Form.value.nuevoNombre.trim() || !promo2x1Form.value.nuevoApellido.trim()) {
+      promo2x1Error.value = "Completá el nombre y apellido del nuevo alumno a anexar."
+      return
+    }
+    if (!promo2x1Form.value.nuevoEntrenadorId) {
+      promo2x1Error.value = "Seleccioná el entrenador para el nuevo alumno."
+      return
+    }
+  } else {
+    if (!promo2x1Form.value.alumnoAnexadoId) {
+      promo2x1Error.value = "Seleccioná al alumno que será anexado en el 2x1."
+      return
+    }
   }
+
   const mesesNum = parseInt(promo2x1Form.value.meses, 10)
   if (!mesesNum || mesesNum < 1) {
     promo2x1Error.value = "La cantidad de meses debe ser al menos 1."
@@ -739,19 +801,33 @@ async function vincularPromo2x1() {
     promo2x1Success.value = ""
 
     const titularId = getAlumnoId(alumnoPromoSeleccionado.value)
-    const result = await MongoService.vincularPromo2x1({
+    const payload = {
       alumnoTitularId: titularId,
-      alumnoAnexadoId: promo2x1Form.value.alumnoAnexadoId,
       meses: mesesNum,
       mesInicio: Number(promo2x1Form.value.mesInicio),
       anioInicio: Number(promo2x1Form.value.anioInicio)
-    })
+    }
+
+    if (esNuevo) {
+      payload.nuevoAlumno = {
+        nombre: promo2x1Form.value.nuevoNombre.trim(),
+        apellido: promo2x1Form.value.nuevoApellido.trim(),
+        celular: promo2x1Form.value.nuevoCelular.trim(),
+        entrenador: promo2x1Form.value.nuevoEntrenadorId
+      }
+    } else {
+      payload.alumnoAnexadoId = promo2x1Form.value.alumnoAnexadoId
+    }
+
+    const result = await MongoService.vincularPromo2x1(payload)
 
     replaceAlumnoAnywhere(result.titular)
     replaceAlumnoAnywhere(result.anexado)
     alumnoPromoSeleccionado.value = result.titular
 
-    promo2x1Success.value = `¡Promo 2x1 vinculada con éxito para ${periodoEstimadoPromo.value}!`
+    promo2x1Success.value = esNuevo
+      ? `¡Alumno ${result.anexado.nombre} ${result.anexado.apellido} creado y vinculado en Promo 2x1 para ${periodoEstimadoPromo.value}!`
+      : `¡Promo 2x1 vinculada con éxito para ${periodoEstimadoPromo.value}!`
   } catch (err) {
     console.error(err)
     promo2x1Error.value = err.message || "Error al vincular promo 2x1."
@@ -2013,7 +2089,28 @@ async function confirmarYGuardarPago() {
           </div>
 
           <form @submit.prevent="vincularPromo2x1">
-            <div class="form-group">
+            <!-- Selector de modo: Alumno existente o Crear nuevo -->
+            <div class="anexo-mode-tabs">
+              <button
+                type="button"
+                class="anexo-tab-btn"
+                :class="{ active: promo2x1Form.modoAnexo === 'existente' }"
+                @click="promo2x1Form.modoAnexo = 'existente'"
+              >
+                🔍 Alumno existente
+              </button>
+              <button
+                type="button"
+                class="anexo-tab-btn"
+                :class="{ active: promo2x1Form.modoAnexo === 'nuevo' }"
+                @click="cambiarAModoNuevoAlumno"
+              >
+                ➕ Crear alumno nuevo
+              </button>
+            </div>
+
+            <!-- MODO 1: Seleccionar alumno existente -->
+            <div v-if="promo2x1Form.modoAnexo === 'existente'" class="form-group">
               <label for="alumnoAnexadoSelect">Seleccionar Alumno a anexar (Beneficiario 2x1) *</label>
               <div class="search-box-wrapper">
                 <input
@@ -2039,9 +2136,67 @@ async function confirmarYGuardarPago() {
                   {{ al.nombreCompleto }} · Prof. {{ al.entrenadorNombre }}
                 </option>
               </select>
-              <small v-if="alumnosFiltradosParaPromo.length === 0" class="empty-list-note">
-                No se encontraron alumnos con ese nombre.
-              </small>
+              <div v-if="alumnosFiltradosParaPromo.length === 0" class="empty-search-action">
+                <small class="empty-list-note">No se encontraron alumnos con ese nombre.</small>
+                <button type="button" class="quick-create-link" @click="cambiarAModoNuevoAlumno">
+                  ➕ Crear a "{{ promo2x1Form.searchFilter || 'nuevo alumno' }}" ahora
+                </button>
+              </div>
+            </div>
+
+            <!-- MODO 2: Crear nuevo alumno y anexar -->
+            <div v-else class="new-student-promo-card">
+              <span class="period-card-title">Datos del nuevo alumno a anexar (sin cargo de pago)</span>
+              <div class="form-row-2col">
+                <div class="form-group">
+                  <label for="nuevoAnexoNombre">Nombre *</label>
+                  <input
+                    id="nuevoAnexoNombre"
+                    v-model="promo2x1Form.nuevoNombre"
+                    type="text"
+                    placeholder="Ej: María"
+                    required
+                    class="select-input"
+                  />
+                </div>
+                <div class="form-group">
+                  <label for="nuevoAnexoApellido">Apellido *</label>
+                  <input
+                    id="nuevoAnexoApellido"
+                    v-model="promo2x1Form.nuevoApellido"
+                    type="text"
+                    placeholder="Ej: Gómez"
+                    required
+                    class="select-input"
+                  />
+                </div>
+              </div>
+
+              <div class="form-row-2col">
+                <div class="form-group">
+                  <label for="nuevoAnexoCelular">Celular (opcional)</label>
+                  <input
+                    id="nuevoAnexoCelular"
+                    v-model="promo2x1Form.nuevoCelular"
+                    type="text"
+                    placeholder="Ej: 1122334455"
+                    class="select-input"
+                  />
+                </div>
+                <div class="form-group">
+                  <label for="nuevoAnexoEntrenador">Entrenador asignado *</label>
+                  <select
+                    id="nuevoAnexoEntrenador"
+                    v-model="promo2x1Form.nuevoEntrenadorId"
+                    required
+                    class="select-input"
+                  >
+                    <option v-for="ent in entrenadoresActivos" :key="ent._id" :value="ent._id">
+                      {{ ent.nombre }} {{ ent.apellido || '' }}
+                    </option>
+                  </select>
+                </div>
+              </div>
             </div>
 
             <div class="period-selection-card">
@@ -2117,7 +2272,10 @@ async function confirmarYGuardarPago() {
                 class="submit-button"
                 :disabled="isSavingPromo2x1"
               >
-                {{ isSavingPromo2x1 ? 'Vinculando...' : 'Vincular Promo 2x1' }}
+                {{ isSavingPromo2x1
+                  ? 'Procesando...'
+                  : (promo2x1Form.modoAnexo === 'nuevo' ? 'Crear y Vincular 2x1' : 'Vincular Promo 2x1')
+                }}
               </button>
             </div>
           </form>
@@ -3059,6 +3217,74 @@ async function confirmarYGuardarPago() {
   font-size: 1.25rem;
   line-height: 1.3;
   flex-shrink: 0;
+}
+
+.anexo-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  background: var(--input-bg);
+  padding: 5px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  margin-bottom: 14px;
+}
+
+.anexo-tab-btn {
+  border: none;
+  background: transparent;
+  color: var(--subtitle-text);
+  padding: 8px 12px;
+  border-radius: 7px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.anexo-tab-btn:hover {
+  color: var(--header-text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.anexo-tab-btn.active {
+  background: var(--rheb-primary-green);
+  color: #111;
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+.new-student-promo-card {
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.empty-search-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.quick-create-link {
+  background: rgba(46, 204, 113, 0.12);
+  color: #27ae60;
+  border: 1px solid rgba(46, 204, 113, 0.35);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.quick-create-link:hover {
+  background: rgba(46, 204, 113, 0.22);
+  border-color: #27ae60;
 }
 
 .search-box-wrapper {
